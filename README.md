@@ -7,7 +7,7 @@ For the Kinesis integration, you need to launch spark-shell with this compiled j
 
     $ git clone https://github.com/maropu/spark-kinesis-sql-asl.git
     $ cd spark-kinesis-sql-asl
-    $ ./bin/spark-shell --jars assembly/spark-sql-kinesis-asl_2.11-2.0.0.jar
+    $ ./bin/spark-shell --jars assembly/spark-sql-kinesis-asl_2.11-2.0.1.jar
 
 ### Prepare a test stream
 
