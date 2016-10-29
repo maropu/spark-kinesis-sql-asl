@@ -92,7 +92,7 @@ object KinesisStreamWriter {
             println(s"Thread-$i sends $recordsPerSecond records")
           }
         }
-      }).start
+      }).start()
     }
   }
 }

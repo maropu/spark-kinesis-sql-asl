@@ -155,7 +155,6 @@ private[kinesis] class KinesisReceiver[T](
       .withKinesisEndpoint(endpointUrl)
       .withInitialPositionInStream(initialPositionInStream)
       .withTaskBackoffTimeMillis(500)
-      .withRegionName(regionName)
       .withMetricsLevel(MetricsLevel.DETAILED)
 
    /*
