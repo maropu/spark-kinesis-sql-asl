@@ -81,12 +81,17 @@ private[kinesis] class KinesisSource(
 
   private val purgeThread: RecurringTimer = startPurgeThread()
 
-  private val initialShardSeqNumbers = {
+  private lazy val initialShardSeqNumbers = {
     val metadataLog =
       new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath)
     val seqNumbers = metadataLog.get(0).getOrElse {
         val offsets = KinesisSourceOffset(fetchAllShardEarliestSeqNumber())
-        metadataLog.add(0, offsets)
+        /**
+         * TODO: This checkpoints are illegal because [[HDFSMetadataLog.add]] must be executed
+         * on a o.a.spark.util.UninterruptibleThread.
+         *
+         * metadataLog.add(0, offsets)
+         */
         logInfo(s"Initial offsets: $offsets")
         offsets
       }.shardToSeqNum
