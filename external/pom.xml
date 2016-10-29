@@ -188,7 +188,7 @@
             <configuration>
               <finalName>${project.artifactId}-${project.version}-with-dependencies</finalName>
               <outputDirectory>${project.parent.build.directory}</outputDirectory>
-              <minimizeJar>true</minimizeJar>
+              <minimizeJar>false</minimizeJar>
               <createDependencyReducedPom>false</createDependencyReducedPom>
                 <artifactSet>
                   <includes>

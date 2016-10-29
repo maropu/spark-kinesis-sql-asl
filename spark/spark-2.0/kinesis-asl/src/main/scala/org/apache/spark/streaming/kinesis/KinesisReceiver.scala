@@ -26,6 +26,7 @@ import scala.util.control.NonFatal
 import com.amazonaws.auth.{AWSCredentials, AWSCredentialsProvider, DefaultAWSCredentialsProviderChain}
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.{IRecordProcessor, IRecordProcessorCheckpointer, IRecordProcessorFactory}
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.{InitialPositionInStream, KinesisClientLibConfiguration, Worker}
+import com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel
 import com.amazonaws.services.kinesis.model.Record
 
 import org.apache.spark.internal.Logging
@@ -155,6 +156,7 @@ private[kinesis] class KinesisReceiver[T](
       .withInitialPositionInStream(initialPositionInStream)
       .withTaskBackoffTimeMillis(500)
       .withRegionName(regionName)
+      .withMetricsLevel(MetricsLevel.DETAILED)
 
    /*
     *  RecordProcessorFactory creates impls of IRecordProcessor.
