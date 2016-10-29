@@ -51,6 +51,11 @@ private[kinesis] class KinesisSource(
 
   import KinesisSourceOffset._
 
+  /** A holder for stream blocks stored in workers */
+  type StreamBlock = (BlockId, SequenceNumberRanges, Boolean)
+
+  override val schema: StructType = _schema
+
   private val _sparkSession = sqlContext.sparkSession
   private val _sc = sqlContext.sparkContext
 
@@ -72,29 +77,9 @@ private[kinesis] class KinesisSource(
   // Starts receiving Amazon Kinesis streams
   private val _ssc = new StreamingContext(_sc, Seconds(1))
 
-  private val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
-    // Creates 1 Kinesis Receiver/input DStream for each shard
-    val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
-    logInfo(s"Create $numStreams streams for $stream")
-    (0 until numStreams).map { i =>
-      new KinesisSourceDStream(
-        _ssc,
-        stream,
-        kinesisOptions.endpointUrl,
-        kinesisOptions.regionId,
-        kinesisOptions.initialPositionInStream,
-        kinesisOptions.checkpointName,
-        Milliseconds(2000),
-        StorageLevel.MEMORY_AND_DISK,
-        collectKinesisStreamBlockData,
-        Some(serializableAWSCredentials)
-      )
-    }
-  }
+  private val blockLock = new ReentrantLock(false)
 
-  // Union all the input streams
-  _ssc.union(kinesisStreams).foreachRDD(_ => {})
-  _ssc.start()
+  private val purgeThread: RecurringTimer = startPurgeThread()
 
   private val initialShardSeqNumbers = {
     val metadataLog =
@@ -107,9 +92,6 @@ private[kinesis] class KinesisSource(
       }.shardToSeqNum
     seqNumbers
   }
-
-  /** A holder for stream blocks stored in workers */
-  type StreamBlock = (BlockId, SequenceNumberRanges, Boolean)
 
   /**
    * Sequence number ranges added to the current block being generated.
@@ -139,10 +121,6 @@ private[kinesis] class KinesisSource(
     seqNumbers
   }
 
-  private val blockLock = new ReentrantLock(false)
-
-  private val purgeThread: RecurringTimer = startPurgeThread()
-
   private lazy val _schema = userSpecifiedSchema.getOrElse {
     KinesisSource.inferSchema(sqlContext, sourceOptions)
   }
@@ -153,6 +131,31 @@ private[kinesis] class KinesisSource(
   private val invalidStreamBlockId = StreamBlockId(0, 0L)
   private val minimumSeqNumber = ""
 
+  private val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
+    // Creates 1 Kinesis Receiver/input DStream for each shard
+    val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
+    logInfo(s"Create $numStreams streams for $stream")
+    (0 until numStreams).map { i =>
+      new KinesisSourceDStream(
+        _ssc,
+        stream,
+        kinesisOptions.endpointUrl,
+        kinesisOptions.regionId,
+        kinesisOptions.initialPositionInStream,
+        kinesisOptions.checkpointName,
+        Milliseconds(2000),
+        StorageLevel.MEMORY_AND_DISK,
+        collectKinesisStreamBlockData,
+        Some(serializableAWSCredentials)
+      )
+    }
+  }
+
+  // Union all the input streams
+  _ssc.union(kinesisStreams).foreachRDD(_ => {})
+  _ssc.start()
+
+
   private def synchronizeStreamBlocks[T](func: => T): Option[T] = {
     var retValue: Option[T] = None
     blockLock.lock()
@@ -160,7 +163,7 @@ private[kinesis] class KinesisSource(
       retValue = Option(func)
     } catch {
       case _: Throwable =>
-        reportDataLoss("May lose data because of an exception occurred"
+        reportDataLoss("May lose data because of an exception occurred "
           + "when updating stream blocks information")
     } finally {
       blockLock.unlock()
@@ -235,8 +238,6 @@ private[kinesis] class KinesisSource(
     logInfo(s"Started a thread: $threadId")
     timer
   }
-
-  override val schema: StructType = _schema
 
   override def getOffset: Option[Offset] = if (isKinesisStreamInitialized) {
     synchronizeStreamBlocks {
