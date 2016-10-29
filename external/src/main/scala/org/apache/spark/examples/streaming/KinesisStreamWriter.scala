@@ -20,6 +20,9 @@ package org.apache.spark.examples.streaming
 import java.io.File
 import java.nio.ByteBuffer
 
+import scala.util.Random
+import scala.collection.JavaConversions._
+
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.services.kinesis.AmazonKinesisClient
 import com.amazonaws.services.kinesis.model.PutRecordRequest
@@ -28,14 +31,15 @@ import org.apache.commons.io.FileUtils
 object KinesisStreamWriter {
 
   def main(args: Array[String]) {
-    if (args.length != 4) {
+    if (args.length != 5) {
       System.err.println(
         """
           |Usage: KinesisStreamWriter <stream-name> <endpoint-url> <records-per-sec> <filename>
           |
           |  <stream-name>     : the name of the Kinesis stream
           |  <endpoint-url>    : the endpoint of the Kinesis service
-          |  <records-per-sec> : the rate of records per second to put onto the stream
+          |  <num-threads>     : the number of threads
+          |  <records-per-sec> : the rate of records/s for each thread to put onto the stream
           |  <filename>        : the filename of records to put onto the stream
         """.stripMargin)
 
@@ -43,46 +47,52 @@ object KinesisStreamWriter {
     }
 
     // Populate the appropriate variables from the given args
-    val Array(stream, endpoint, recordsPerSecond, fileName) = args
+    val Array(stream, endpoint, numThreads, recordsPerSecond, fileName) = args
 
+    require(numThreads.toInt > 0, s"Number of threads must be positive: $numThreads")
     require(new File(fileName).exists(), s"$fileName does not exist")
 
-    // Create the low-level Kinesis Client from the AWS Java SDK
-    val kinesisClient = new AmazonKinesisClient(new DefaultAWSCredentialsProviderChain())
-    kinesisClient.setEndpoint(endpoint)
+    println(s"$numThreads threads put records onto stream $stream and endpoint $endpoint " +
+      s"at a rate of $recordsPerSecond records per second")
 
-    println(s"Putting records onto stream $stream and endpoint $endpoint at a rate of" +
-      s" $recordsPerSecond records per second")
+    val records = FileUtils.readLines(new File(fileName)).toSeq
+    val maxRecordNum = records.size
 
-    val recordIterator = new Iterator[String] {
-      val records = FileUtils.readLines(new File(fileName))
-      val maxRecordNum = records.size()
-      var curPos = 0
+    for (i <- 0 until numThreads.toInt) {
+      new Thread(new Runnable() {
+        override def run(): Unit = {
+          // Create the low-level Kinesis Client from the AWS Java SDK
+          val kinesisClient = new AmazonKinesisClient(new DefaultAWSCredentialsProviderChain())
+          kinesisClient.setEndpoint(endpoint)
 
-      override def hasNext: Boolean = true
-      override def next(): String = {
-        val record = records.get(curPos % maxRecordNum)
-        curPos = curPos + 1
-        record
-      }
-    }
+          val recordIterator = new Iterator[String] {
+            val rnd = new Random(i)
 
-    while (true) {
-      // Generate recordsPerSec records to put onto the stream
-      val rows = (1 to recordsPerSecond.toInt).map { recordNum =>
-        // Create a PutRecordRequest with an Array[Byte] version of the data
-        val putRecordRequest = new PutRecordRequest()
-          .withStreamName(stream)
-          .withPartitionKey(s"partitionKey-$recordNum")
-          .withData(ByteBuffer.wrap(recordIterator.next().getBytes()))
+            override def hasNext: Boolean = true
 
-        // Put the record onto the stream and capture the PutRecordResult
-        kinesisClient.putRecord(putRecordRequest)
-      }
+            override def next(): String =
+              records.get(rnd.nextInt(maxRecordNum))
+          }
 
-      // Sleep for a second
-      Thread.sleep(1000)
-      println("Sent " + recordsPerSecond + " records")
+          while (true) {
+            // Generate recordsPerSec records to put onto the stream
+            val rows = (1 to recordsPerSecond.toInt).map { recordNum =>
+              // Create a PutRecordRequest with an Array[Byte] version of the data
+              val putRecordRequest = new PutRecordRequest()
+                .withStreamName(stream)
+                .withPartitionKey(s"partitionKey-$recordNum")
+                .withData(ByteBuffer.wrap(recordIterator.next().getBytes()))
+
+              // Put the record onto the stream and capture the PutRecordResult
+              kinesisClient.putRecord(putRecordRequest)
+            }
+
+            // Sleep for a second
+            Thread.sleep(1000)
+            println(s"Thread-$i sends $recordsPerSecond records")
+          }
+        }
+      }).start
     }
   }
 }
