@@ -34,7 +34,9 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, StorageLevel, StreamBlockId}
 import org.apache.spark.streaming.kinesis._
+import org.apache.spark.streaming.util.RecurringTimer
 import org.apache.spark.streaming._
+import org.apache.spark.util.SystemClock
 
 /**
  * A [[Source]] that uses the Kinesis Client Library to reads data from Amazon Kinesis.
@@ -51,12 +53,14 @@ private[kinesis] class KinesisSource(
 
   private val _sparkSession = sqlContext.sparkSession
   private val _sc = sqlContext.sparkContext
+
   private val kinesisOptions = new KinesisOptions(sourceOptions)
   private val kinesisClient = {
     val cli = new AmazonKinesisClient(credentialProvider)
     cli.setEndpoint(kinesisOptions.endpointUrl)
     cli
   }
+
   private val serializableAWSCredentials = {
     val awsCredentials = credentialProvider.getCredentials
     SerializableAWSCredentials(
@@ -114,7 +118,14 @@ private[kinesis] class KinesisSource(
    */
   private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlock]()
 
-  private var isKinesisStreamInitialized = false
+  @volatile private var isKinesisStreamInitialized = false
+
+  /**
+   * A holder of the offset until which processes have been done.
+   * Entries from an earlier offset to `frozenOffset` in `streamBlocksInStores` are safely
+   * removed in the purge thread.
+   */
+  private var frozenOffset: Option[Offset] = None
 
   /**
    * Latest sequence number ranges that have been stored successfully.
@@ -130,7 +141,19 @@ private[kinesis] class KinesisSource(
 
   private val blockLock = new ReentrantLock(false)
 
-  private def synchronizeUpdateStreamBlock[T](func: => T): Option[T] = {
+  private val purgeThread: RecurringTimer = startPurgeThread()
+
+  private lazy val _schema = userSpecifiedSchema.getOrElse {
+    KinesisSource.inferSchema(sqlContext, sourceOptions)
+  }
+
+  private val dataFormat = KinesisDataFormatFactory.create(kinesisOptions.format)
+  private val schemaWithoutTimestamp = StructType(schema.drop(1))
+
+  private val invalidStreamBlockId = StreamBlockId(0, 0L)
+  private val minimumSeqNumber = ""
+
+  private def synchronizeStreamBlocks[T](func: => T): Option[T] = {
     var retValue: Option[T] = None
     blockLock.lock()
     try {
@@ -153,7 +176,7 @@ private[kinesis] class KinesisSource(
       isBlockIdValid: Array[Boolean]): Unit = {
     if (blockIds.length == 0) return
     logInfo(s"Received kinesis stream blocked data: ${arrayOfseqNumberRanges.mkString(", ")}")
-    synchronizeUpdateStreamBlock {
+    synchronizeStreamBlocks {
       val streamBlocks = Seq.tabulate(blockIds.length) { i =>
         val isValid = if (isBlockIdValid.length == 0) true else isBlockIdValid(i)
         (blockIds(i), arrayOfseqNumberRanges(i), isValid)
@@ -180,31 +203,49 @@ private[kinesis] class KinesisSource(
     }
   }
 
-  private lazy val _schema = userSpecifiedSchema.getOrElse {
-    KinesisSource.inferSchema(sqlContext, sourceOptions)
+  private def purge(): Unit = {
+    synchronizeStreamBlocks {
+      frozenOffset.map { offset =>
+        KinesisSourceOffset.getShardSeqNumbers(offset).map { case (shard, frozenSeqNumber) =>
+          val (survivied, purged) = streamBlocksInStores.partition { block =>
+            block._2.ranges.exists { range =>
+              if (shard.streamName == range.streamName && shard.shardId == range.shardId) {
+                range.toSeqNumber <= frozenSeqNumber
+              } else {
+                false
+              }
+            }
+          }
+          streamBlocksInStores = survivied
+          logWarning("Purged unused stream blocks: " + purged.map(_._2).mkString(", "))
+        }
+      }
+    }
+  }
+
+  /**
+   * Start a thread to purge unnecessary entries in `streamBlocksInStores ` with
+   * the given checkpoint duration.
+   */
+  private def startPurgeThread(): RecurringTimer = {
+    val period = Minutes(5).milliseconds
+    val threadId = s"Kinesis Purge Thread for Streams: ${kinesisOptions.streamNames.mkString(", ")}"
+    val timer = new RecurringTimer(new SystemClock(), period, _ => purge(), threadId)
+    timer.start()
+    logInfo(s"Started a thread: $threadId")
+    timer
   }
 
   override val schema: StructType = _schema
 
-  private val dataFormat = KinesisDataFormatFactory.create(kinesisOptions.format)
-  private val schemaWithoutTimestamp = StructType(schema.drop(1))
-
-  private val invalidStreamBlockId = StreamBlockId(0, 0L)
-  private val minimumSeqNumber = ""
-
-  override def getOffset: Option[Offset] = {
-    var offset: KinesisSourceOffset = null
-    synchronizeUpdateStreamBlock {
-      if (isKinesisStreamInitialized) {
-        offset = KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone.toMap)
-      }
-    }
-    if (offset != null) {
+  override def getOffset: Option[Offset] = if (isKinesisStreamInitialized) {
+    synchronizeStreamBlocks {
+      val offset = KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone.toMap)
       logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
-      Some(offset)
-    } else {
-      None
+      offset
     }
+  } else {
+    None
   }
 
   /**
@@ -243,7 +284,7 @@ private[kinesis] class KinesisSource(
     }
 
     // Calculate sequence ranges
-    val seqRanges = (newShardSeqNumbers ++ fromShardSeqNumbers).map { case (shard, from) =>
+    val targetRanges = (newShardSeqNumbers ++ fromShardSeqNumbers).map { case (shard, from) =>
       SequenceNumberRange(
         shard.streamName,
         shard.shardId,
@@ -255,60 +296,46 @@ private[kinesis] class KinesisSource(
         reportDataLoss(s"Shard ${range.shardId}'s offset in ${range.streamName} was changed " +
           s"from ${range.fromSeqNumber} to ${range.toSeqNumber}, some data may have been missed")
         false
+      } else if (range.fromSeqNumber == range.toSeqNumber) {
+        // Remove the shards that have no new stream data
+        false
       } else {
         true
       }
     }.toSeq
 
     def isSameShard(x: SequenceNumberRange, y: SequenceNumberRange): Boolean = {
-      x.streamName == y.streamName & x.shardId == y.shardId
+      x.streamName == y.streamName && x.shardId == y.shardId
     }
-    def includeRange(subject: SequenceNumberRange, target: SequenceNumberRange): Boolean = {
-      require(isSameShard(subject, target), "`includeRange` only used in the same shard")
-      target.fromSeqNumber < subject.fromSeqNumber && subject.toSeqNumber <= target.toSeqNumber
-    }
-    val targetBlocks = synchronizeUpdateStreamBlock {
-      var candidiates = streamBlocksInStores
-      val notUsed = mutable.ArrayBuffer[StreamBlock]()
 
-      seqRanges.foreach { targetRange =>
-        val (nextCandidiate, n) = candidiates.partition { case (_, r, _) =>
-          r.ranges.forall { case range =>
+    val targetBlocks = synchronizeStreamBlocks {
+      val candidates = streamBlocksInStores.filter { case (_, SequenceNumberRanges(ranges), _) =>
+        ranges.forall { range =>
+          targetRanges.exists { targetRange =>
             if (isSameShard(range, targetRange)) {
-              includeRange(range, targetRange)
+              targetRange.fromSeqNumber < range.fromSeqNumber &&
+                range.toSeqNumber <= targetRange.toSeqNumber
             } else {
-              true
+              false
             }
           }
         }
-        notUsed +: n
-        candidiates = nextCandidiate
       }
 
-      // TODO: This code below is moved from this block
-      streamBlocksInStores = notUsed.filter { case (_, r, _) =>
-        seqRanges.forall { case targetRange =>
-          r.ranges.forall { case range =>
-            val isSurvive = if (isSameShard(range, targetRange)) {
-              targetRange.fromSeqNumber <= range.fromSeqNumber
-            } else {
-              true
-            }
-            if (!isSurvive) {
-              reportDataLoss(s"Some data loss might occur: ${range}")
-            }
-            isSurvive
-          }
-        }
-      }
-      if (candidiates.size > 0) {
-        candidiates.unzip3
+      frozenOffset = start
+
+      /**
+       * TODO: If we cannot find some of qualified stream blocks in `streamBlocksInStores`,
+       * we fetch all the data via vanilla Kinesis iterators.
+       */
+      if (candidates.nonEmpty) {
+        candidates.unzip3
       } else {
         null
       }
     }.getOrElse {
-      Seq.tabulate(seqRanges.length) { i =>
-        (invalidStreamBlockId, SequenceNumberRanges(seqRanges(i)), false)
+      Seq.tabulate(targetRanges.length) { i =>
+        (invalidStreamBlockId, SequenceNumberRanges(targetRanges(i)), false)
       }.unzip3
     }
 
@@ -340,7 +367,7 @@ private[kinesis] class KinesisSource(
   // Fetches the earliest offsets for all the shards in given streams
   private def fetchAllShardEarliestSeqNumber(): Map[KinesisShard, String] = {
     val allShards = kinesisOptions.streamNames.map { streamName =>
-      val shards = kinesisClient.describeStream(streamName).getStreamDescription().getShards()
+      val shards = kinesisClient.describeStream(streamName).getStreamDescription.getShards
       logDebug(s"Number of assigned to $streamName: ${shards.size}")
       (streamName, shards)
     }
@@ -356,16 +383,17 @@ private[kinesis] class KinesisSource(
 
   // Fetches the earliest offsets for shards
   private def fetchShardEarliestSeqNumber(shard: KinesisShard): String = {
-    val shards = kinesisClient.describeStream(shard.streamName).getStreamDescription().getShards()
+    val shards = kinesisClient.describeStream(shard.streamName).getStreamDescription.getShards
     shards.find(_.getParentShardId == shard.shardId)
       .map(_.getSequenceNumberRange.getStartingSequenceNumber)
       .getOrElse {
-          logWarning(s"Unknown shard detected: ${shard.shardId}")
-          ""
-        }
+        logWarning(s"Unknown shard detected: ${shard.shardId}")
+        minimumSeqNumber
+      }
   }
 
   override def stop(): Unit = {
+    purgeThread.stop(interruptTimer = true)
     _ssc.stop(stopSparkContext = false, stopGracefully = true)
   }
 
@@ -386,7 +414,7 @@ private[kinesis] class KinesisSource(
 private[kinesis] object KinesisSource {
 
   def withTimestamp(schema: StructType): StructType = {
-    StructType(StructField("timestamp", TimestampType, false) +: schema)
+    StructType(StructField("timestamp", TimestampType, nullable = false) +: schema)
   }
 
   def inferSchema(

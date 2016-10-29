@@ -37,6 +37,7 @@
       for each Spark version.
     -->
     <module>spark/spark-2.0/kinesis-asl</module>
+    <module>spark/spark-2.0/streaming</module>
     <module>spark/spark-2.0/tests</module>
     <module>external</module>
   </modules>
