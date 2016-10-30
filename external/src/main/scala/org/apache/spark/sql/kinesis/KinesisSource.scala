@@ -202,20 +202,22 @@ private[kinesis] class KinesisSource(
   private def purge(): Unit = {
     synchronizeStreamBlocks {
       frozenOffset.map { offset =>
-        KinesisSourceOffset.getShardSeqNumbers(offset).map { case (shard, frozenSeqNumber) =>
-          val (survivied, purged) = streamBlocksInStores.partition { block =>
-            block._2.ranges.exists { range =>
-              if (shard.streamName == range.streamName && shard.shardId == range.shardId) {
-                range.toSeqNumber <= frozenSeqNumber
-              } else {
-                false
-              }
-            }
+        val kinesisFrozenOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
+        val (purged, survived) = streamBlocksInStores.partition {
+          case (_, SequenceNumberRanges(ranges), _) =>
+
+          ranges.exists { range =>
+            val kinesisShard = KinesisShard(range.streamName, range.shardId)
+            val frozenSeqNumber = kinesisFrozenOffset.getOrElse(kinesisShard, {
+              reportDataLoss(s"Unknown shard detected: $kinesisShard")
+              minimumSeqNumber
+            })
+            range.toSeqNumber <= frozenSeqNumber
           }
-          streamBlocksInStores = survivied
-          if (purged.nonEmpty) {
-            reportDataLoss("Purged unused stream blocks: " + purged.map(_._2).mkString(", "))
-          }
+        }
+        streamBlocksInStores = survived
+        if (purged.nonEmpty) {
+          reportDataLoss(s"Purged the ${purged.size} blocks of unused stream blocks")
         }
       }
     }
@@ -294,7 +296,7 @@ private[kinesis] class KinesisSource(
         shard.shardId,
         from,
         // This unexpected behaviour is handled in a next range check
-        untilShardSeqNumbers.getOrDefault(shard, ""))
+        untilShardSeqNumbers.getOrDefault(shard, minimumSeqNumber))
     }.filter { range =>
       if (range.toSeqNumber < range.fromSeqNumber) {
         reportDataLoss(s"Shard ${range.shardId}'s offset in ${range.streamName} was changed " +
@@ -313,7 +315,9 @@ private[kinesis] class KinesisSource(
     }
 
     val targetBlocks = synchronizeStreamBlocks {
-      val candidates = streamBlocksInStores.filter { case (_, SequenceNumberRanges(ranges), _) =>
+      val (candidates, notUsed) = streamBlocksInStores.partition {
+        case (_, SequenceNumberRanges(ranges), _) =>
+
         ranges.forall { range =>
           targetRanges.exists { targetRange =>
             if (isSameShard(range, targetRange)) {
@@ -326,6 +330,7 @@ private[kinesis] class KinesisSource(
         }
       }
 
+      streamBlocksInStores = notUsed
       frozenOffset = start
 
       /**
