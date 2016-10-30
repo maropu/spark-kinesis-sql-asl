@@ -118,7 +118,7 @@ private[kinesis] class KinesisCheckpointer(
     val period = checkpointInterval.milliseconds
     val threadName = s"Kinesis Checkpointer - Worker $workerId"
     val callback = () => {
-      if (isCheckpointerInitialized) {
+      if (!isCheckpointerInitialized) {
         // This initialization avoids a warning message below in the kinesis client library:
         // WARN MetricsHelper: No metrics scope set in thread, getMetricsScope
         // returning NullMetricsScope.
@@ -127,7 +127,7 @@ private[kinesis] class KinesisCheckpointer(
       }
       checkpointAll()
     }
-    val timer = new RecurringTimer(clock, period, _ => callback, threadName)
+    val timer = new RecurringTimer(clock, period, _ => callback(), threadName)
     timer.start()
     logDebug(s"Started checkpointer thread: $threadName")
     timer

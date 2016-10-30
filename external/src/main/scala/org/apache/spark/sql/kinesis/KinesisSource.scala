@@ -54,10 +54,9 @@ private[kinesis] class KinesisSource(
   /** A holder for stream blocks stored in workers */
   type StreamBlock = (BlockId, SequenceNumberRanges, Boolean)
 
-  override val schema: StructType = _schema
-
   private val _sparkSession = sqlContext.sparkSession
   private val _sc = sqlContext.sparkContext
+  private val _ssc = new StreamingContext(_sc, Seconds(1))
 
   private val kinesisOptions = new KinesisOptions(sourceOptions)
   private val kinesisClient = {
@@ -74,69 +73,7 @@ private[kinesis] class KinesisSource(
     )
   }
 
-  // Starts receiving Amazon Kinesis streams
-  private val _ssc = new StreamingContext(_sc, Seconds(1))
-
-  private val blockLock = new ReentrantLock(false)
-
-  private val purgeThread: RecurringTimer = startPurgeThread()
-
-  private lazy val initialShardSeqNumbers = {
-    val metadataLog =
-      new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath)
-    val seqNumbers = metadataLog.get(0).getOrElse {
-        val offsets = KinesisSourceOffset(fetchAllShardEarliestSeqNumber())
-        /**
-         * TODO: This checkpoints are illegal because [[HDFSMetadataLog.add]] must be executed
-         * on a o.a.spark.util.UninterruptibleThread.
-         *
-         * metadataLog.add(0, offsets)
-         */
-        logInfo(s"Initial offsets: $offsets")
-        offsets
-      }.shardToSeqNum
-    seqNumbers
-  }
-
-  /**
-   * Sequence number ranges added to the current block being generated.
-   * Accessing and updating of this map is synchronized with `shardIdToLatestStoredSeqNum`
-   * by lock `blockLock`.
-   */
-  private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlock]()
-
-  @volatile private var isKinesisStreamInitialized = false
-
-  /**
-   * A holder of the offset until which processes have been done.
-   * Entries from an earlier offset to `frozenOffset` in `streamBlocksInStores` are safely
-   * removed in the purge thread.
-   */
-  private var frozenOffset: Option[Offset] = None
-
-  /**
-   * Latest sequence number ranges that have been stored successfully.
-   */
-  private lazy val shardIdToLatestStoredSeqNum: mutable.Map[KinesisShard, String] = {
-    val seqNumbers = mutable.Map[KinesisShard, String]()
-    initialShardSeqNumbers.map { case (key, value) =>
-      seqNumbers += key -> value
-    }
-    isKinesisStreamInitialized = true
-    seqNumbers
-  }
-
-  private lazy val _schema = userSpecifiedSchema.getOrElse {
-    KinesisSource.inferSchema(sqlContext, sourceOptions)
-  }
-
-  private val dataFormat = KinesisDataFormatFactory.create(kinesisOptions.format)
-  private val schemaWithoutTimestamp = StructType(schema.drop(1))
-
-  private val invalidStreamBlockId = StreamBlockId(0, 0L)
-  private val minimumSeqNumber = ""
-
-  private val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
+  private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
     val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
     logInfo(s"Create $numStreams streams for $stream")
@@ -156,10 +93,60 @@ private[kinesis] class KinesisSource(
     }
   }
 
-  // Union all the input streams
-  _ssc.union(kinesisStreams).foreachRDD(_ => {})
-  _ssc.start()
+  /**
+   * Latest sequence number ranges that have been stored successfully.
+   */
+  private val shardIdToLatestStoredSeqNum = mutable.Map[KinesisShard, String]()
 
+  /**
+   * Sequence number ranges added to the current block being generated.
+   * Accessing and updating of this map is synchronized with `shardIdToLatestStoredSeqNum`
+   * by lock `blockLock`.
+   */
+  private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlock]()
+
+  /**
+   * A holder of the offset until which processes have been done.
+   * Entries from an earlier offset to `frozenOffset` in `streamBlocksInStores` are safely
+   * removed in the purge thread.
+   */
+  private var frozenOffset: Option[Offset] = None
+
+  private lazy val initialShardSeqNumbers = {
+    val metadataLog = new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath)
+    val seqNumbers = metadataLog.get(0).getOrElse {
+      val offsets = KinesisSourceOffset(fetchAllShardEarliestSeqNumber())
+      metadataLog.add(0, offsets)
+      logInfo(s"Initial offsets: $offsets")
+      offsets
+    }.shardToSeqNum
+
+    seqNumbers.map { case (shard, seqNumber) =>
+      shardIdToLatestStoredSeqNum += shard -> seqNumber
+    }
+
+    // Launch a spark streaming context
+    _ssc.union(kinesisStreams).foreachRDD(_ => {})
+    _ssc.start()
+
+    seqNumbers
+  }
+
+  private val dataFormat = KinesisDataFormatFactory.create(kinesisOptions.format)
+
+  private lazy val _schema = userSpecifiedSchema.getOrElse {
+    KinesisSource.inferSchema(sqlContext, sourceOptions)
+  }
+
+  override val schema: StructType = _schema
+
+  private val schemaWithoutTimestamp = StructType(schema.drop(1))
+
+  private val purgeThread: RecurringTimer = startPurgeThread()
+  private val blockLock = new ReentrantLock(false)
+
+  private val invalidStreamBlockId = StreamBlockId(0, 0L)
+  private val minimumSeqNumber = ""
 
   private def synchronizeStreamBlocks[T](func: => T): Option[T] = {
     var retValue: Option[T] = None
@@ -244,14 +231,15 @@ private[kinesis] class KinesisSource(
     timer
   }
 
-  override def getOffset: Option[Offset] = if (isKinesisStreamInitialized) {
+  override def getOffset: Option[Offset] = {
+    // Make sure that this source is initialized
+    initialShardSeqNumbers
+
     synchronizeStreamBlocks {
       val offset = KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone.toMap)
       logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
       offset
     }
-  } else {
-    None
   }
 
   /**
@@ -259,6 +247,9 @@ private[kinesis] class KinesisSource(
    * (`start.get.shardToSeqNum`, `end.shardToSeqNum`], i.e. `start.get.shardToSeqNum` is exclusive.
    */
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
+    // Make sure that this source is initialized
+    initialShardSeqNumbers
+
     logInfo(s"getBatch called with start = $start, end = $end")
     val untilShardSeqNumbers = KinesisSourceOffset.getShardSeqNumbers(end)
     val fromShardSeqNumbers = start match {
