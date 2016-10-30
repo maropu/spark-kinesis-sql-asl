@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.storage.{BlockId, StorageLevel}
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.kinesis.KinesisSourceDStream.KinesisSourceType
+import org.apache.spark.streaming.receiver.Receiver
 import org.apache.spark.streaming.scheduler.ReceivedBlockInfo
 import org.apache.spark.streaming.{Duration, StreamingContext}
 
@@ -75,6 +76,19 @@ private[spark] class KinesisSourceDStream(
         " it may not be possible to recover from failures")
       super.createBlockRDD(time, blockInfos)
     }
+  }
+
+  override def getReceiver(): Receiver[KinesisSourceType] = {
+    new KinesisReceiver(streamName, endpointUrl, regionName, initialPositionInStream,
+      checkpointAppName, checkpointInterval, storageLevel, KinesisSourceDStream.msgHandler,
+      awsCredentialsOption,
+      /**
+       * Disables automatically running Kinesis chekpoints in receivers because Spark does
+       * checkpoints in [[org.apache.spark.sql.execution.streaming.MetadataLog]].
+       *
+       * TODO: How to invoke Kinesis checkpoints in streams by Spark.
+       */
+      true)
   }
 }
 

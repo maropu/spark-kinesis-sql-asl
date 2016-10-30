@@ -91,7 +91,8 @@ private[kinesis] class KinesisReceiver[T](
     checkpointInterval: Duration,
     storageLevel: StorageLevel,
     messageHandler: Record => T,
-    awsCredentialsOption: Option[SerializableAWSCredentials])
+    awsCredentialsOption: Option[SerializableAWSCredentials],
+    disableCheckpointer: Boolean = false)
   extends Receiver[T](storageLevel) with Logging { receiver =>
 
   /*
@@ -147,7 +148,12 @@ private[kinesis] class KinesisReceiver[T](
 
     workerId = Utils.localHostName() + ":" + UUID.randomUUID()
 
-    kinesisCheckpointer = new KinesisCheckpointer(receiver, checkpointInterval, workerId)
+    kinesisCheckpointer = if (!disableCheckpointer) {
+      new KinesisCheckpointer(receiver, checkpointInterval, workerId)
+    } else {
+      null
+    }
+
     // KCL config instance
     val awsCredProvider = resolveAWSCredentialsProvider()
     val kinesisClientLibConfiguration =
@@ -232,8 +238,9 @@ private[kinesis] class KinesisReceiver[T](
    * given shardId.
    */
   def setCheckpointer(shardId: String, checkpointer: IRecordProcessorCheckpointer): Unit = {
-    assert(kinesisCheckpointer != null, "Kinesis Checkpointer not initialized!")
-    kinesisCheckpointer.setCheckpointer(shardId, checkpointer)
+    if (kinesisCheckpointer != null) {
+      kinesisCheckpointer.setCheckpointer(shardId, checkpointer)
+    }
   }
 
   /**
@@ -242,8 +249,9 @@ private[kinesis] class KinesisReceiver[T](
    * checkpoint.
    */
   def removeCheckpointer(shardId: String, checkpointer: IRecordProcessorCheckpointer): Unit = {
-    assert(kinesisCheckpointer != null, "Kinesis Checkpointer not initialized!")
-    kinesisCheckpointer.removeCheckpointer(shardId, checkpointer)
+    if (kinesisCheckpointer != null) {
+      kinesisCheckpointer.removeCheckpointer(shardId, checkpointer)
+    }
   }
 
   /**

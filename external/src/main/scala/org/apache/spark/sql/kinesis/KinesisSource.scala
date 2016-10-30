@@ -75,6 +75,7 @@ private[kinesis] class KinesisSource(
 
   private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
+    // TODO: How to handle the oversubscription of #cores in executors
     val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
     logInfo(s"Create $numStreams streams for $stream")
     (0 until numStreams).map { i =>
