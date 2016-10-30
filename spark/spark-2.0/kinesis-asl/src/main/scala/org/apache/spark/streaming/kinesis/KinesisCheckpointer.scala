@@ -22,11 +22,12 @@ import scala.util.control.NonFatal
 
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorCheckpointer
 import com.amazonaws.services.kinesis.clientlibrary.types.ShutdownReason
+import com.amazonaws.services.kinesis.metrics.impl.{MetricsHelper, NullMetricsScope}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.streaming.Duration
 import org.apache.spark.streaming.util.RecurringTimer
-import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
+import org.apache.spark.util.{Clock, SystemClock}
 
 /**
  * This is a helper class for managing Kinesis checkpointing.
@@ -48,6 +49,8 @@ private[kinesis] class KinesisCheckpointer(
   private val lastCheckpointedSeqNums = new ConcurrentHashMap[String, String]()
 
   private val checkpointerThread: RecurringTimer = startCheckpointerThread()
+
+  private var isCheckpointerInitialized = false
 
   /** Update the checkpointer instance to the most recent one for the given shardId. */
   def setCheckpointer(shardId: String, checkpointer: IRecordProcessorCheckpointer): Unit = {
@@ -114,7 +117,17 @@ private[kinesis] class KinesisCheckpointer(
   private def startCheckpointerThread(): RecurringTimer = {
     val period = checkpointInterval.milliseconds
     val threadName = s"Kinesis Checkpointer - Worker $workerId"
-    val timer = new RecurringTimer(clock, period, _ => checkpointAll(), threadName)
+    val callback = () => {
+      if (isCheckpointerInitialized) {
+        // This initialization avoids a warning message below in the kinesis client library:
+        // WARN MetricsHelper: No metrics scope set in thread, getMetricsScope
+        // returning NullMetricsScope.
+        MetricsHelper.setMetricsScope(new NullMetricsScope())
+        isCheckpointerInitialized = true
+      }
+      checkpointAll()
+    }
+    val timer = new RecurringTimer(clock, period, _ => callback, threadName)
     timer.start()
     logDebug(s"Started checkpointer thread: $threadName")
     timer
