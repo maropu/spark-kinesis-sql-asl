@@ -39,6 +39,7 @@ private[spark] class KinesisSourceDStream(
     initialPositionInStream: InitialPositionInStream,
     checkpointAppName: String,
     checkpointInterval: Duration,
+    storageLevel: StorageLevel,
     @transient callbackFunc: (Array[BlockId], Array[SequenceNumberRanges], Array[Boolean]) => Unit,
     awsCredentialsOption: Option[SerializableAWSCredentials]
   ) extends KinesisInputDStream[KinesisSourceType](
@@ -49,7 +50,7 @@ private[spark] class KinesisSourceDStream(
     initialPositionInStream,
     checkpointAppName,
     checkpointInterval,
-    StorageLevel.MEMORY_AND_DISK,
+    storageLevel,
     KinesisSourceDStream.msgHandler,
     awsCredentialsOption) {
 
