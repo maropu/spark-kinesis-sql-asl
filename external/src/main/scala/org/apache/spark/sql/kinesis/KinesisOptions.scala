@@ -90,7 +90,11 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
     InitialPositionInStream.LATEST
   }
 
+  val pollTimeoutMs = getInt("pollTimeoutMs", 2000)
+
+  val purgeIntervalMs = getInt("purgeInternalMs", 300000)
+
   val retryTimeoutMs = getInt("retryTimeoutMs", 10000)
 
-  val failOnDataLoss = getBool("failOnDataLoss", true)
+  val failOnDataLoss = getBool("failOnDataLoss", false)
 }

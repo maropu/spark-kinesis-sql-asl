@@ -86,8 +86,7 @@ private[kinesis] class KinesisSource(
         kinesisOptions.regionId,
         kinesisOptions.initialPositionInStream,
         kinesisOptions.checkpointName,
-        Milliseconds(2000),
-        StorageLevel.MEMORY_AND_DISK,
+        Milliseconds(kinesisOptions.pollTimeoutMs),
         collectKinesisStreamBlockData,
         Some(serializableAWSCredentials)
       )
@@ -226,7 +225,7 @@ private[kinesis] class KinesisSource(
    * the given checkpoint duration.
    */
   private def startPurgeThread(): RecurringTimer = {
-    val period = Minutes(5).milliseconds
+    val period = Milliseconds(kinesisOptions.purgeIntervalMs).milliseconds
     val threadId = s"Kinesis Purge Thread for Streams: ${kinesisOptions.streamNames.mkString(", ")}"
     val timer = new RecurringTimer(new SystemClock(), period, _ => purge(), threadId)
     timer.start()
@@ -239,6 +238,10 @@ private[kinesis] class KinesisSource(
     initialShardSeqNumbers
 
     synchronizeStreamBlocks {
+      /**
+       * TODO: Need to control processing rates to prevent Spark from invoke many tasks
+       * for processing small stream blocks.
+       */
       val offset = KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone.toMap)
       logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
       offset
@@ -340,6 +343,7 @@ private[kinesis] class KinesisSource(
     }
 
     // Create a RDD that reads from Amazon Kinesis and get inputs as binary data
+    // TODO: How to handle preferred locations on cached storage blocks?
     val baseRdd = new KinesisSourceBlockRDD(
       _sc,
       kinesisOptions.regionId,
