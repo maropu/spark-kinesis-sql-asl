@@ -213,7 +213,9 @@ private[kinesis] class KinesisSource(
             }
           }
           streamBlocksInStores = survivied
-          logWarning("Purged unused stream blocks: " + purged.map(_._2).mkString(", "))
+          if (purged.nonEmpty) {
+            reportDataLoss("Purged unused stream blocks: " + purged.map(_._2).mkString(", "))
+          }
         }
       }
     }
