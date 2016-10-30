@@ -83,7 +83,7 @@ The following configurations are optional:
     [json](./external/src/main/scala/org/apache/spark/sql/execution/datasources/json/JsonKinesisValueFormat.scala#L36),
     and [libsvm](./external/src/main/scala/org/apache/spark/ml/source/libsvm/LibSVMKinesisValueFormat.scala#L39)
 
- * `failOnDataLoss`: \["true", "false"\] (default: "true")
+ * `failOnDataLoss`: \["true", "false"\] (default: "false")
 
     Whether to fail the query when it's possible that data is lost (e.g., topics are deleted, or
     offsets are out of range). This may be a false alarm. You can disable it when it doesn't work
