@@ -27,7 +27,7 @@
   </parent>
 
   <groupId>org.apache.spark</groupId>
-  <artifactId>spark-sql-stream-writer_2.11</artifactId>
+  <artifactId>kinesis-stream-writer_2.11</artifactId>
   <packaging>jar</packaging>
   <name>Stream Writer for Amazon Kinesis</name>
 
