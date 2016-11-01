@@ -98,7 +98,7 @@ object KinesisStreamWriter {
             val rows = (1 to recordsPerSecond.toInt).map { recordNum =>
               val str = recordIterator.next()
               val data = ByteBuffer.wrap(str.getBytes(StandardCharsets.UTF_8))
-              val partitionKey = str
+              val partitionKey = s"partitionKey-$recordNum"
 
               val future = producer.addUserRecord(stream, partitionKey, data)
 
