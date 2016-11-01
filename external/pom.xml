@@ -63,6 +63,12 @@
       <scope>compile</scope>
     </dependency>
     <dependency>
+      <groupId>com.amazonaws</groupId>
+      <artifactId>amazon-kinesis-producer</artifactId>
+      <version>${aws.kinesis.producer.version}</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-streaming-kinesis-asl_${scala.binary.version}</artifactId>
       <version>${project.version}</version>
@@ -73,6 +79,11 @@
       <artifactId>spark-streaming-utils_${scala.binary.version}</artifactId>
       <version>${project.version}</version>
       <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <version>18.0</version>
     </dependency>
     <dependency>
       <groupId>commons-io</groupId>
@@ -203,6 +214,8 @@
                     <include>com.amazonaws:aws-java-sdk-cloudwatch</include>
                     <include>com.amazonaws:aws-java-sdk-dynamodb</include>
                     <include>com.amazonaws:amazon-kinesis-client</include>
+                    <include>com.amazonaws:amazon-kinesis-producer</include>
+                    <include>com.google.guava:guava</include>
                     <include>org.apache.spark:spark-streaming-kinesis-asl_${scala.binary.version}</include>
                     <include>com.fasterxml.jackson.core:jackson-core</include>
                     <include>com.fasterxml.jackson.core:jackson-databind</include>

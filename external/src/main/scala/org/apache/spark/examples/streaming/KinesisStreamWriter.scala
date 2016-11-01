@@ -19,13 +19,18 @@ package org.apache.spark.examples.streaming
 
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.util.Random
 import scala.collection.JavaConversions._
 
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
+import com.amazonaws.regions.RegionUtils
 import com.amazonaws.services.kinesis.AmazonKinesisClient
 import com.amazonaws.services.kinesis.model.PutRecordRequest
+import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration, UserRecordResult}
+import com.google.common.util.concurrent.{FutureCallback, Futures}
 import org.apache.commons.io.FileUtils
 
 object KinesisStreamWriter {
@@ -60,6 +65,17 @@ object KinesisStreamWriter {
 
     for (i <- 0 until numThreads.toInt) {
       new Thread(new Runnable() {
+
+        private val producer: KinesisProducer = {
+          val conf = new KinesisProducerConfiguration()
+            .setRecordMaxBufferedTime(1000)
+            .setMaxConnections(1)
+            .setRegion(RegionUtils.getRegionMetadata.getRegionByEndpoint(endpoint).getName)
+            .setMetricsLevel("summary")
+
+          new KinesisProducer(conf)
+        }
+
         override def run(): Unit = {
           // Create the low-level Kinesis Client from the AWS Java SDK
           val kinesisClient = new AmazonKinesisClient(new DefaultAWSCredentialsProviderChain())
@@ -75,21 +91,36 @@ object KinesisStreamWriter {
           }
 
           while (true) {
-            // Generate recordsPerSec records to put onto the stream
-            val rows = (1 to recordsPerSecond.toInt).map { recordNum =>
-              // Create a PutRecordRequest with an Array[Byte] version of the data
-              val putRecordRequest = new PutRecordRequest()
-                .withStreamName(stream)
-                .withPartitionKey(s"partitionKey-$recordNum")
-                .withData(ByteBuffer.wrap(recordIterator.next().getBytes()))
+            // Count # of success and failure for a producer
+            val (numSuccess, numFailure) = (new AtomicInteger(0), new AtomicInteger(0))
 
-              // Put the record onto the stream and capture the PutRecordResult
-              kinesisClient.putRecord(putRecordRequest)
+            // Generate recordsPerSec records to put onto the stream via KPL
+            val rows = (1 to recordsPerSecond.toInt).map { recordNum =>
+              val str = recordIterator.next()
+              val data = ByteBuffer.wrap(str.getBytes(StandardCharsets.UTF_8))
+              val partitionKey = str
+
+              val future = producer.addUserRecord(stream, partitionKey, data)
+
+              val kinesisCallBack = new FutureCallback[UserRecordResult]() {
+
+                override def onSuccess(result: UserRecordResult): Unit = {
+                  numSuccess.incrementAndGet()
+                }
+
+                override def onFailure(t: Throwable): Unit = {
+                  numFailure.incrementAndGet()
+                }
+              }
+              Futures.addCallback(future, kinesisCallBack)
             }
+            producer.flushSync()
+
+            println(s"Thread-$i succeeded to send $numSuccess records and " +
+              s"failed to send $numFailure records")
 
             // Sleep for a second
             Thread.sleep(1000)
-            println(s"Thread-$i sends $recordsPerSecond records")
           }
         }
       }).start()
