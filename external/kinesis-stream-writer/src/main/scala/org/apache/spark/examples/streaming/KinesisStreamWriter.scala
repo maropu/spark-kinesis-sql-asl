@@ -28,7 +28,6 @@ import scala.collection.JavaConversions._
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.regions.RegionUtils
 import com.amazonaws.services.kinesis.AmazonKinesisClient
-import com.amazonaws.services.kinesis.model.PutRecordRequest
 import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures}
 import org.apache.commons.io.FileUtils
