@@ -31,9 +31,11 @@ fi
 _SPARK_VERSION=`grep "<spark.version>" "${SPARK_SQL_KINESIS}/pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
 _SCALA_VERSION=`grep "<scala.binary.version>" "${SPARK_SQL_KINESIS}/pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
 _JAR=$SPARK_SQL_KINESIS/target/spark-sql-kinesis-stream-writer_${_SCALA_VERSION}-${_SPARK_VERSION}-SNAPSHOT-with-dependencies.jar
+_XMS=4g
+_XMX=4g
 
 if [ -e $_JAR ]; then
-  scala -classpath $_JAR org.apache.spark.examples.streaming.KinesisStreamWriter "$@"
+  scala -J-Xms$_XMS -J-Xmx$_XMX -classpath $_JAR org.apache.spark.examples.streaming.KinesisStreamWriter "$@"
 else
   echo "${_JAR} not found, so you need to compile first"
   exit 1
