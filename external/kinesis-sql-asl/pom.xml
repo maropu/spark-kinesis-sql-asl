@@ -203,45 +203,21 @@
                     <include>log4j:log4j</include>
                   </includes>
                 </artifactSet>
-                <filters>
-                  <filter>
-                    <artifact>commons-logging:commons-logging</artifact>
-                    <includes>
-                      <include>**</include>
-                    </includes>
-                  </filter>
-                  <filter>
-                    <artifact>log4j:log4j</artifact>
-                    <includes>
-                      <include>**</include>
-                    </includes>
-                  </filter>
-                </filters>
-              </configuration>
-            </execution>
-          </executions>
-        </plugin>
-      <plugin>
-        <groupId>org.scalastyle</groupId>
-        <artifactId>scalastyle-maven-plugin</artifactId>
-        <version>0.8.0</version>
-        <configuration>
-          <verbose>false</verbose>
-          <failOnViolation>false</failOnViolation>
-          <includeTestSourceDirectory>true</includeTestSourceDirectory>
-          <failOnWarning>false</failOnWarning>
-          <sourceDirectory>src/main/scala</sourceDirectory>
-          <testSourceDirectory>src/test/scala</testSourceDirectory>
-          <configLocation>scalastyle-config.xml</configLocation>
-          <outputFile>target/scalastyle-output.xml</outputFile>
-          <inputEncoding>${project.build.sourceEncoding}</inputEncoding>
-          <outputEncoding>${project.reporting.outputEncoding}</outputEncoding>
-        </configuration>
-        <executions>
-          <execution>
-          <goals>
-            <goal>check</goal>
-          </goals>
+              <filters>
+                <filter>
+                  <artifact>commons-logging:commons-logging</artifact>
+                  <includes>
+                    <include>**</include>
+                  </includes>
+                </filter>
+                <filter>
+                  <artifact>log4j:log4j</artifact>
+                  <includes>
+                    <include>**</include>
+                  </includes>
+                </filter>
+              </filters>
+            </configuration>
           </execution>
         </executions>
       </plugin>

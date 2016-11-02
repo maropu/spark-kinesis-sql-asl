@@ -19,7 +19,7 @@ package org.apache.spark.sql.kinesis
 
 import java.util.concurrent.locks.ReentrantLock
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import com.amazonaws.auth.AWSCredentialsProvider
@@ -33,9 +33,9 @@ import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, StorageLevel, StreamBlockId}
+import org.apache.spark.streaming._
 import org.apache.spark.streaming.kinesis._
 import org.apache.spark.streaming.util.RecurringTimerWrapper
-import org.apache.spark.streaming._
 import org.apache.spark.util.SystemClock
 
 /**
@@ -187,8 +187,8 @@ private[kinesis] class KinesisSource(
         }.groupBy(_._1).mapValues { value =>
           value.map(_._2).max
         }.foreach { case (shard, latestSeqNumber) =>
-          val curSeqNumber = shardIdToLatestStoredSeqNum.getOrDefault(shard, minimumSeqNumber)
-          shardIdToLatestStoredSeqNum.put(shard, Seq(latestSeqNumber, curSeqNumber).max)
+          val seqNumber = shardIdToLatestStoredSeqNum.asJava.getOrDefault(shard, minimumSeqNumber)
+          shardIdToLatestStoredSeqNum.put(shard, Seq(latestSeqNumber, seqNumber).max)
         }
       }
       logDebug(s"Pending stream blocks are: ${streamBlocksInStores.map(_._2).mkString(", ")}")
@@ -296,7 +296,7 @@ private[kinesis] class KinesisSource(
         shard.shardId,
         from,
         // This unexpected behaviour is handled in a next range check
-        untilShardSeqNumbers.getOrDefault(shard, minimumSeqNumber))
+        untilShardSeqNumbers.asJava.getOrDefault(shard, minimumSeqNumber))
     }.filter { range =>
       if (range.toSeqNumber < range.fromSeqNumber) {
         reportDataLoss(s"Shard ${range.shardId}'s offset in ${range.streamName} was changed " +
@@ -382,7 +382,7 @@ private[kinesis] class KinesisSource(
       (streamName, shards)
     }
     allShards.flatMap { case (streamName, shards) =>
-      val shardSeqNumbers = shards.map { case shard =>
+      val shardSeqNumbers = shards.asScala.map { case shard =>
         (KinesisShard(streamName, shard.getShardId),
           shard.getSequenceNumberRange.getStartingSequenceNumber)
       }
@@ -394,7 +394,7 @@ private[kinesis] class KinesisSource(
   // Fetches the earliest offsets for shards
   private def fetchShardEarliestSeqNumber(shard: KinesisShard): String = {
     val shards = kinesisClient.describeStream(shard.streamName).getStreamDescription.getShards
-    shards.find(_.getParentShardId == shard.shardId)
+    shards.asScala.find(_.getParentShardId == shard.shardId)
       .map(_.getSequenceNumberRange.getStartingSequenceNumber)
       .getOrElse {
         logWarning(s"Unknown shard detected: ${shard.shardId}")

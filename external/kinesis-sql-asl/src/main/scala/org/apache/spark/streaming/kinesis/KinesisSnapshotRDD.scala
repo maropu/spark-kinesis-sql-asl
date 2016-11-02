@@ -19,7 +19,7 @@ package org.apache.spark.streaming.kinesis
 
 import java.util.Date
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 
 import com.amazonaws.auth.AWSCredentials
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
@@ -64,7 +64,7 @@ private[spark] class KinesisSnapshotRDD(
   override def getPartitions: Array[Partition] = {
     streams.flatMap { stream =>
       val shards = client.describeStream(stream).getStreamDescription.getShards
-      shards.map { shard =>
+      shards.asScala.map { shard =>
         val fromSeqNumber = shard.getSequenceNumberRange.getStartingSequenceNumber
         (stream, shard.getShardId, fromSeqNumber)
       }.zipWithIndex.map { case ((streamName, shard, seqNumber), index) =>
@@ -88,7 +88,7 @@ private[spark] class KinesisSnapshotRDD(
 
 private object KinesisSnapshotRDD {
 
-  def msgHandler = new (Record => Array[Byte]) with Serializable {
+  def msgHandler: (Record => Array[Byte]) = new (Record => Array[Byte]) with Serializable {
 
     override def apply(record: Record): Array[Byte] = {
       record.getData.array
@@ -113,7 +113,7 @@ private class KinesisSnapshotIterator(
 
   var _nextValue: Record = getNextInternal()
   var _numReadRecord: Int = 0
-    
+
   private def getNextInternal(): Record = {
     try {
       val record = super.getNext()

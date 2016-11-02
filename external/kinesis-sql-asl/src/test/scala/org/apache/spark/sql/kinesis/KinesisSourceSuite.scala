@@ -24,7 +24,7 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.sql.execution.streaming.{Offset, Source, StreamExecution, StreamingExecutionRelation}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types._
-import org.apache.spark.streaming.kinesis.{KPLBasedKinesisTestUtils, KinesisFunSuite, KinesisTestUtils}
+import org.apache.spark.streaming.kinesis.{KinesisFunSuite, KinesisTestUtils, KPLBasedKinesisTestUtils}
 
 abstract class KinesisSourceTests(aggregateTestData: Boolean) extends StreamTest
     with KinesisFunSuite {

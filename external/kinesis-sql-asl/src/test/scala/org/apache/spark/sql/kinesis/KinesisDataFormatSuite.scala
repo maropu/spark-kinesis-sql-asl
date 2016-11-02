@@ -22,11 +22,11 @@ import java.nio.charset.StandardCharsets
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.SparseVector
 import org.apache.spark.ml.source.libsvm.LibSVMKinesisValueFormat
-import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.sql.execution.datasources.csv.CSVKinesisValueFormat
 import org.apache.spark.sql.execution.datasources.json.JsonKinesisValueFormat
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.UTF8String
 
 class KinesisDataFormatSuite extends SparkFunSuite with SharedSQLContext {
 

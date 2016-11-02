@@ -12,7 +12,7 @@ notifications:
   email: false
 
 script:
-  - mvn -q test
+  - mvn scalastyle:check test
 
 after_success:
   - mvn clean

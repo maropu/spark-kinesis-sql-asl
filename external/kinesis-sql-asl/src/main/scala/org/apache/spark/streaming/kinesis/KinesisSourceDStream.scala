@@ -25,11 +25,10 @@ import com.amazonaws.services.kinesis.model.Record
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.storage.{BlockId, StorageLevel}
-import org.apache.spark.streaming.Time
+import org.apache.spark.streaming.{Duration, StreamingContext, Time}
 import org.apache.spark.streaming.kinesis.KinesisSourceDStream.KinesisSourceType
 import org.apache.spark.streaming.receiver.Receiver
 import org.apache.spark.streaming.scheduler.ReceivedBlockInfo
-import org.apache.spark.streaming.{Duration, StreamingContext}
 
 private[spark] class KinesisSourceDStream(
     _ssc: StreamingContext,
@@ -96,7 +95,8 @@ private[spark] object KinesisSourceDStream {
 
   type KinesisSourceType = (Long, Array[Byte])
 
-  def msgHandler = new (Record => KinesisSourceType) with Serializable {
+  def msgHandler: (Record => KinesisSourceType) =
+      new (Record => KinesisSourceType) with Serializable {
 
     override def apply(record: Record): KinesisSourceType = {
       val timestamp = DateTimeUtils.fromJavaTimestamp(
