@@ -27,7 +27,6 @@ import com.google.common.util.concurrent.{FutureCallback, Futures}
 
 private[spark] class KPLBasedKinesisTestUtils(streamShardCount: Int = 2)
     extends KinesisTestUtils(streamShardCount) {
-
   override protected def getProducer(aggregate: Boolean): KinesisDataGenerator = {
     if (!aggregate) {
       new SimpleDataGenerator(kinesisClient)

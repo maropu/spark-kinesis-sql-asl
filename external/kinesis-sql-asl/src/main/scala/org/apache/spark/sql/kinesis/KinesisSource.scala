@@ -34,7 +34,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, StorageLevel, StreamBlockId}
 import org.apache.spark.streaming.kinesis._
-import org.apache.spark.streaming.util.RecurringTimer
+import org.apache.spark.streaming.util.RecurringTimerWrapper
 import org.apache.spark.streaming._
 import org.apache.spark.util.SystemClock
 
@@ -143,7 +143,7 @@ private[kinesis] class KinesisSource(
 
   private val schemaWithoutTimestamp = StructType(schema.drop(1))
 
-  private val purgeThread: RecurringTimer = startPurgeThread()
+  private val purgeThread: RecurringTimerWrapper = startPurgeThread()
   private val blockLock = new ReentrantLock(false)
 
   private val invalidStreamBlockId = StreamBlockId(0, 0L)
@@ -227,10 +227,10 @@ private[kinesis] class KinesisSource(
    * Start a thread to purge unnecessary entries in `streamBlocksInStores ` with
    * the given checkpoint duration.
    */
-  private def startPurgeThread(): RecurringTimer = {
+  private def startPurgeThread(): RecurringTimerWrapper = {
     val period = Milliseconds(kinesisOptions.purgeIntervalMs).milliseconds
     val threadId = s"Kinesis Purge Thread for Streams: ${kinesisOptions.streamNames.mkString(", ")}"
-    val timer = new RecurringTimer(new SystemClock(), period, _ => purge(), threadId)
+    val timer = new RecurringTimerWrapper(new SystemClock(), period, _ => purge(), threadId)
     timer.start()
     logInfo(s"Started a thread: $threadId")
     timer

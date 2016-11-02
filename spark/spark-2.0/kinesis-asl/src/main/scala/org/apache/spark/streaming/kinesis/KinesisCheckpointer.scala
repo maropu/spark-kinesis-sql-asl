@@ -27,7 +27,7 @@ import com.amazonaws.services.kinesis.metrics.impl.{MetricsHelper, NullMetricsSc
 import org.apache.spark.internal.Logging
 import org.apache.spark.streaming.Duration
 import org.apache.spark.streaming.util.RecurringTimer
-import org.apache.spark.util.{Clock, SystemClock}
+import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
 
 /**
  * This is a helper class for managing Kinesis checkpointing.

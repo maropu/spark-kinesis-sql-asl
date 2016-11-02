@@ -28,7 +28,7 @@
   <artifactId>spark-kinesis-asl_2.11</artifactId>
   <version>2.0.1-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>Spark Kinesis Integration</name>
+  <name>Spark Kinesis Integration for Structured Streaming</name>
 
   <modules>
     <!--
@@ -37,7 +37,6 @@
       for each Spark version.
     -->
     <module>spark/spark-2.0/kinesis-asl</module>
-    <module>spark/spark-2.0/streaming</module>
     <module>spark/spark-2.0/tests</module>
     <module>external/kinesis-sql-asl</module>
     <module>external/kinesis-stream-writer</module>

@@ -21,10 +21,6 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.SparkException
-import org.apache.spark.util.Utils
-
-import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -39,8 +35,6 @@ import com.amazonaws.services.kinesis.model._
 
 import org.apache.spark.internal.Logging
 
-import util.control.NonFatal
-
 /**
  * Shared utility methods for performing Kinesis tests that actually transfer data.
  *
@@ -48,7 +42,6 @@ import util.control.NonFatal
  */
 private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging {
 
-  val streamNamePrefix = Utils.getFormattedClassName(KinesisTestUtils)
   val endpointUrl = KinesisTestUtils.endpointUrl
   val regionName = RegionUtils.getRegionMetadata.getRegionByEndpoint(endpointUrl).getName()
 
@@ -61,10 +54,8 @@ private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging
   @volatile
   private var _streamName: String = _
 
-  private lazy val credentials = KinesisTestUtils.getAWSCredentials()
-
   protected lazy val kinesisClient = {
-    val client = new AmazonKinesisClient(credentials)
+    val client = new AmazonKinesisClient(KinesisTestUtils.getAWSCredentials())
     client.setEndpoint(endpointUrl)
     client
   }
@@ -124,7 +115,7 @@ private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging
     pushData(testData.asScala, aggregate = false)
   }
 
-  def deleteStream(deleteExistingStreams: Boolean = false): Unit = {
+  def deleteStream(): Unit = {
     try {
       if (streamCreated) {
         kinesisClient.deleteStream(streamName)
@@ -132,13 +123,6 @@ private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging
     } catch {
       case e: Exception =>
         logWarning(s"Could not delete stream $streamName")
-    }
-    if (deleteExistingStreams) {
-      kinesisClient.listStreams.getStreamNames
-          .filter(_.startsWith(streamNamePrefix)).map { stream =>
-        logWarning(s"Delete existing stream $stream")
-        kinesisClient.deleteStream(stream)
-      }
     }
   }
 
@@ -168,7 +152,7 @@ private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging
     var testStreamName: String = null
     do {
       Thread.sleep(TimeUnit.SECONDS.toMillis(describeStreamPollTimeSeconds))
-      testStreamName = s"$streamNamePrefix-${math.abs(Random.nextLong())}"
+      testStreamName = s"KinesisTestUtils-${math.abs(Random.nextLong())}"
     } while (describeStream(testStreamName).nonEmpty)
     testStreamName
   }
@@ -190,7 +174,7 @@ private[spark] class KinesisTestUtils(streamShardCount: Int = 2) extends Logging
   }
 }
 
-private[kinesis] object KinesisTestUtils extends Logging {
+private[kinesis] object KinesisTestUtils {
 
   val envVarNameForEnablingTests = "ENABLE_KINESIS_TESTS"
   val endVarNameForEndpoint = "KINESIS_TEST_ENDPOINT_URL"
@@ -242,49 +226,6 @@ private[kinesis] object KinesisTestUtils extends Logging {
              |to set the credentials in your system such that the DefaultAWSCredentialsProviderChain
              |can find the credentials.
            """.stripMargin)
-    }
-  }
-
-  // TODO: This func was coped from [[KinesisBackedBlockRDD]] and must be put in a single location
-  def retryOrTimeout[T](message: String, retryTimeoutMs: Int = 10000)(body: => T): T = {
-    import KinesisSequenceRangeIterator._
-
-    var startTimeMs = System.currentTimeMillis()
-    var retryCount = 0
-    var waitTimeMs = MIN_RETRY_WAIT_TIME_MS
-    var result: Option[T] = None
-    var lastError: Throwable = null
-
-    def isTimedOut = (System.currentTimeMillis() - startTimeMs) >= retryTimeoutMs
-    def isMaxRetryDone = retryCount >= MAX_RETRIES
-
-    while (result.isEmpty && !isTimedOut && !isMaxRetryDone) {
-      if (retryCount > 0) {  // wait only if this is a retry
-        Thread.sleep(waitTimeMs)
-        waitTimeMs *= 2  // if you have waited, then double wait time for next round
-      }
-      try {
-        result = Some(body)
-      } catch {
-        case NonFatal(t) =>
-          lastError = t
-           t match {
-             case ptee: ProvisionedThroughputExceededException =>
-               logWarning(s"Error while $message [attempt = ${retryCount + 1}]", ptee)
-             case e: Throwable =>
-               throw new SparkException(s"Error while $message", e)
-           }
-      }
-      retryCount += 1
-    }
-    result.getOrElse {
-      if (isTimedOut) {
-        throw new SparkException(
-          s"Timed out after $retryTimeoutMs ms while $message, last exception: ", lastError)
-      } else {
-        throw new SparkException(
-          s"Gave up after $retryCount retries while $message, last exception: ", lastError)
-      }
     }
   }
 }

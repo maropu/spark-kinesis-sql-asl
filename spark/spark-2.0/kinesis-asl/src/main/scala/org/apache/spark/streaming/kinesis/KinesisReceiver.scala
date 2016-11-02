@@ -161,7 +161,6 @@ private[kinesis] class KinesisReceiver[T](
       .withKinesisEndpoint(endpointUrl)
       .withInitialPositionInStream(initialPositionInStream)
       .withTaskBackoffTimeMillis(500)
-      .withMetricsLevel(MetricsLevel.DETAILED)
 
    /*
     *  RecordProcessorFactory creates impls of IRecordProcessor.

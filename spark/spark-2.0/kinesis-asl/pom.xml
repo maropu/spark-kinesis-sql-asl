@@ -15,8 +15,7 @@
 ~ See the License for the specific language governing permissions and
 ~ limitations under the License.
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>org.apache.spark</groupId>
@@ -26,10 +25,13 @@
   </parent>
 
   <!-- Kinesis integration is not included by default due to ASL-licensed code. -->
-  <groupId>org.apache.spark</groupId>
   <artifactId>spark-streaming-kinesis-asl_2.11</artifactId>
   <packaging>jar</packaging>
-  <name>Amazon Kinesis Integration for Spark Streaming</name>
+  <name>Spark Kinesis Integration</name>
+
+  <properties>
+    <sbt.project.name>streaming-kinesis-asl</sbt.project.name>
+  </properties>
 
   <dependencies>
     <dependency>
