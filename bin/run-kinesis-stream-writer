@@ -17,31 +17,34 @@
 # limitations under the License.
 #
 
-if [ "$SPARK_SQL_KINESIS" == "" ]; then
-  if [ -e ../bin/${0##*/} ]; then
-    SPARK_SQL_KINESIS=".."
-  elif [ -e ./bin/${0##*/} ]; then
-    SPARK_SQL_KINESIS="."
-  else
-    echo "env SPARK_SQL_KINESIS not defined"
-    exit 1
-  fi
-fi
+# Determine the current working directory
+_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Preserve the calling directory
+_CALLING_DIR="$(pwd)"
+# Scala options used during launching jar
+_SCALA_OPTS="-J-Xms4g -J-Xmx4g"
 
-_SPARK_VERSION=`grep "<spark.version>" "${SPARK_SQL_KINESIS}/pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
-_SCALA_VERSION=`grep "<scala.binary.version>" "${SPARK_SQL_KINESIS}/pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
+# Load some functions to instal some applications
+. ${_DIR}/../thirdparty/install.sh
+
+# Install the proper version of Scala for launching stream writers
+install_scala
+
+# Reset the current working directory
+cd "${_CALLING_DIR}"
+
+# Resolve a jar location for stream writers
+_SPARK_VERSION=`grep "<spark.version>" "${_DIR}/../pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
+_SCALA_VERSION=`grep "<scala.binary.version>" "${_DIR}/../pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
 _JAR_FILE="kinesis-stream-writer_${_SCALA_VERSION}-${_SPARK_VERSION}"
-
-_MAIN_CLASS="org.apache.spark.examples.streaming.KinesisStreamWriter"
-
-_BUILT_JAR="$SPARK_SQL_KINESIS/target/${_JAR_FILE}-SNAPSHOT-with-dependencies.jar"
+_BUILT_JAR="$_DIR/../target/${_JAR_FILE}-SNAPSHOT-with-dependencies.jar"
 if [ -e $_BUILT_JAR ]; then
   _JAR=$_BUILT_JAR
 else
-  _JAR="$SPARK_SQL_KINESIS/assembly/${_JAR_FILE}.jar"
-  echo "${_BUILT_JAR} not found, so use ${_JAR}"
+  _JAR="$_DIR/../assembly/${_JAR_FILE}.jar"
+  echo "${_BUILT_JAR} not found, so use pre-compiled ${_JAR}"
 fi
 
 # Last, launch stream writers in the jar
-scala ${_SCALA_OPTS} -classpath $_JAR $_MAIN_CLASS "$@"
+${SCALA_BIN} ${_SCALA_OPTS} -classpath ${_JAR} org.apache.spark.examples.streaming.KinesisStreamWriter "$@"
 

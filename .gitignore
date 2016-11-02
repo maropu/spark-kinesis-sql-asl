@@ -26,10 +26,10 @@ R/unit-tests.out
 R/cran-check.out
 R/pkg/vignettes/sparkr-vignettes.html
 build/*.jar
-build/apache-maven*
-build/scala*
-build/zinc*
-bin/spark-*-bin-hadoop*
+thirdparty/spark-*-bin-hadoop*
+thirdparty/scala*
+thirdparty/apache-maven*
+thirdparty/zinc*
 cache
 checkpoint
 conf/*.cmd
