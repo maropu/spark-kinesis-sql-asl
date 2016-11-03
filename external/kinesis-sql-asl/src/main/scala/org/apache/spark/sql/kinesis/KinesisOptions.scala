@@ -92,6 +92,8 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
 
   val pollTimeoutMs = getInt("pollTimeoutMs", 2000)
 
+  val softLimitMaxRecordsPerTrigger = getInt("softLimitMaxRecordsPerTrigger", -1)
+
   val purgeIntervalMs = getInt("purgeInternalMs", 300000)
 
   val retryTimeoutMs = getInt("retryTimeoutMs", 10000)

@@ -52,7 +52,7 @@ private[kinesis] class KinesisSource(
   import KinesisSourceOffset._
 
   /** A holder for stream blocks stored in workers */
-  type StreamBlock = (BlockId, SequenceNumberRanges, Boolean)
+  type StreamBlockInfo = (BlockId, SequenceNumberRanges, Boolean, Long)
 
   private val _sparkSession = sqlContext.sparkSession
   private val _sc = sqlContext.sparkContext
@@ -94,6 +94,9 @@ private[kinesis] class KinesisSource(
     }
   }
 
+  private var purgeThread: RecurringTimerWrapper = _
+  private val blockLock = new ReentrantLock(false)
+
   /**
    * Latest sequence number ranges that have been stored successfully.
    */
@@ -103,15 +106,17 @@ private[kinesis] class KinesisSource(
    * Sequence number ranges added to the current block being generated.
    * Accessing and updating of this map is synchronized with `shardIdToLatestStoredSeqNum`
    * by lock `blockLock`.
+   *
+   * TODO: Need to replace this array with a queue?
    */
-  private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlock]()
+  private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlockInfo]()
 
   /**
    * A holder of the offset until which processes have been done.
-   * Entries from an earlier offset to `frozenOffset` in `streamBlocksInStores` are safely
+   * Entries from an earlier offset to `currentOffset` in `streamBlocksInStores` are safely
    * removed in the purge thread.
    */
-  private var frozenOffset: Option[Offset] = None
+  private var currentOffset: Option[Offset] = None
 
   private lazy val initialShardSeqNumbers = {
     val metadataLog = new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath)
@@ -126,9 +131,15 @@ private[kinesis] class KinesisSource(
       shardIdToLatestStoredSeqNum += shard -> seqNumber
     }
 
+    // Initialize a current offset with earliest one
+    currentOffset = Some(KinesisSourceOffset(seqNumbers))
+
     // Launch a spark streaming context
     _ssc.union(kinesisStreams).foreachRDD(_ => {})
     _ssc.start()
+
+    // Then, start a purge thread
+    purgeThread = startPurgeThread()
 
     seqNumbers
   }
@@ -143,8 +154,6 @@ private[kinesis] class KinesisSource(
 
   private val schemaWithoutTimestamp = StructType(schema.drop(1))
 
-  private val purgeThread: RecurringTimerWrapper = startPurgeThread()
-  private val blockLock = new ReentrantLock(false)
 
   private val invalidStreamBlockId = StreamBlockId(0, 0L)
   private val minimumSeqNumber = ""
@@ -155,9 +164,9 @@ private[kinesis] class KinesisSource(
     try {
       retValue = Option(func)
     } catch {
-      case _: Throwable =>
+      case e: Throwable =>
         reportDataLoss("May lose data because of an exception occurred "
-          + "when updating stream blocks information")
+          + "when updating stream blocks information: " + e)
     } finally {
       blockLock.unlock()
     }
@@ -168,14 +177,16 @@ private[kinesis] class KinesisSource(
    * Callback method called after a block has been generated.
    */
   private def collectKinesisStreamBlockData(
-      blockIds: Array[BlockId], arrayOfseqNumberRanges: Array[SequenceNumberRanges],
-      isBlockIdValid: Array[Boolean]): Unit = {
+      blockIds: Array[BlockId],
+      arrayOfseqNumberRanges: Array[SequenceNumberRanges],
+      isBlockIdValid: Array[Boolean],
+      arrayOfnumRecords: Array[Long]): Unit = {
     if (blockIds.length == 0) return
     logInfo(s"Received kinesis stream blocked data: ${arrayOfseqNumberRanges.mkString(", ")}")
     synchronizeStreamBlocks {
       val streamBlocks = Seq.tabulate(blockIds.length) { i =>
         val isValid = if (isBlockIdValid.length == 0) true else isBlockIdValid(i)
-        (blockIds(i), arrayOfseqNumberRanges(i), isValid)
+        (blockIds(i), arrayOfseqNumberRanges(i), isValid, arrayOfnumRecords(i))
       }
       streamBlocks.map { case streamBlock =>
         streamBlocksInStores += streamBlock
@@ -201,18 +212,18 @@ private[kinesis] class KinesisSource(
 
   private def purge(): Unit = {
     synchronizeStreamBlocks {
-      frozenOffset.map { offset =>
-        val kinesisFrozenOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
+      currentOffset.map { offset =>
+        val kinesisCurrentOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
         val (purged, survived) = streamBlocksInStores.partition {
-          case (_, SequenceNumberRanges(ranges), _) =>
+          case (_, SequenceNumberRanges(ranges), _, _) =>
 
           ranges.exists { range =>
             val kinesisShard = KinesisShard(range.streamName, range.shardId)
-            val frozenSeqNumber = kinesisFrozenOffset.getOrElse(kinesisShard, {
+            val currentSeqNumber = kinesisCurrentOffset.getOrElse(kinesisShard, {
               reportDataLoss(s"Unknown shard detected: $kinesisShard")
               minimumSeqNumber
             })
-            range.toSeqNumber <= frozenSeqNumber
+            range.toSeqNumber <= currentSeqNumber
           }
         }
         streamBlocksInStores = survived
@@ -224,7 +235,7 @@ private[kinesis] class KinesisSource(
   }
 
   /**
-   * Start a thread to purge unnecessary entries in `streamBlocksInStores ` with
+   * Start a thread to purge unnecessary entries in `streamBlocksInStores` with
    * the given checkpoint duration.
    */
   private def startPurgeThread(): RecurringTimerWrapper = {
@@ -241,13 +252,44 @@ private[kinesis] class KinesisSource(
     initialShardSeqNumbers
 
     synchronizeStreamBlocks {
-      /**
-       * TODO: Need to control processing rates to prevent Spark from invoke many tasks
-       * for processing small stream blocks.
-       */
-      val offset = KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone.toMap)
+      val offset = kinesisOptions.softLimitMaxRecordsPerTrigger match {
+        case limit if limit > 0 =>
+          /**
+           * Control processing number of records per trigger to prevent Spark from
+           * invoking many tasks in a job.
+           */
+          limitBatch(limit)
+        case _ =>
+          KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone().toMap)
+      }
       logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
       offset
+    }
+  }
+
+  /** Limit number of records fetched from shards. */
+  private def limitBatch(maxRecords: Int): KinesisSourceOffset = {
+    currentOffset.map { offset =>
+      val kinesisCurrentOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
+      val (limitedOffset, numRecords) = streamBlocksInStores
+        .foldLeft((mutable.Map(kinesisCurrentOffset.toSeq: _*), 0L)) {
+            case ((offset, sumRecords), (_, SequenceNumberRanges(ranges), _, n)) =>
+
+          // Apply the soft limit here
+          if (sumRecords < maxRecords) {
+            ranges.foreach { range =>
+              offset.put(KinesisShard(range.streamName, range.shardId), range.toSeqNumber)
+            }
+            (offset, sumRecords + n)
+          } else {
+            (offset, sumRecords)
+          }
+      }
+      logDebug(s"Select $numRecords records from ${streamBlocksInStores.map(_._4).sum} records " +
+        "to limit batch size per trigger")
+      KinesisSourceOffset(limitedOffset.toMap)
+    }.getOrElse {
+      sys.error("currentOffset not initialized")
     }
   }
 
@@ -316,7 +358,7 @@ private[kinesis] class KinesisSource(
 
     val targetBlocks = synchronizeStreamBlocks {
       val (candidates, notUsed) = streamBlocksInStores.partition {
-        case (_, SequenceNumberRanges(ranges), _) =>
+        case (_, SequenceNumberRanges(ranges), _, _) =>
 
         ranges.forall { range =>
           targetRanges.exists { targetRange =>
@@ -331,14 +373,16 @@ private[kinesis] class KinesisSource(
       }
 
       streamBlocksInStores = notUsed
-      frozenOffset = start
+
+      /** Update the offset where processes have been done. */
+      currentOffset = Some(end)
 
       /**
        * TODO: If we cannot find some of qualified stream blocks in `streamBlocksInStores`,
        * we fetch all the data via vanilla Kinesis iterators.
        */
       if (candidates.nonEmpty) {
-        candidates.unzip3
+        candidates.map(d => (d._1, d._2, d._3)).unzip3
       } else {
         null
       }

@@ -39,7 +39,8 @@ private[spark] class KinesisSourceDStream(
     checkpointAppName: String,
     checkpointInterval: Duration,
     storageLevel: StorageLevel,
-    @transient callbackFunc: (Array[BlockId], Array[SequenceNumberRanges], Array[Boolean]) => Unit,
+    @transient callbackFunc:
+      (Array[BlockId], Array[SequenceNumberRanges], Array[Boolean], Array[Long]) => Unit,
     awsCredentialsOption: Option[SerializableAWSCredentials]
   ) extends KinesisInputDStream[KinesisSourceType](
     _ssc,
@@ -65,9 +66,10 @@ private[spark] class KinesisSourceDStream(
       val seqNumRanges = blockInfos
         .map { _.metadataOption.get.asInstanceOf[SequenceNumberRanges] }.toArray
       val isBlockIdValid = blockInfos.map { _.isBlockIdValid() }.toArray
+      val arrayOfnumRecords = blockInfos.map(_.numRecords.getOrElse(0L)).toArray
       logDebug(s"Creating KinesisBackedBlockRDD for $time with ${seqNumRanges.length} " +
           s"seq number ranges: ${seqNumRanges.mkString(", ")} ")
-      callbackFunc(blockIds, seqNumRanges, isBlockIdValid)
+      callbackFunc(blockIds, seqNumRanges, isBlockIdValid, arrayOfnumRecords)
       // Returns empty RDD because `KinesisSource` does not use the output
       _ssc.sparkContext.emptyRDD[KinesisSourceType]
     } else {
