@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.execution.datasources.csv
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
@@ -114,14 +115,24 @@ private[spark] class CSVKinesisValueFormat extends KinesisValueFormat {
       options: Map[String, String]): Iterator[Array[Byte]] => Iterator[InternalRow] = {
     val csvOptions = new CSVOptions(options)
 
-    new (Iterator[Array[Byte]] => Iterator[InternalRow]) with Serializable {
+    new (Iterator[Array[Byte]] => Iterator[InternalRow]) with Serializable with Logging {
       lazy val lineReader = new LineCsvReader(csvOptions)
       lazy val rowParser = CSVRelation.csvParser(schema, schema.fieldNames, csvOptions)
 
       override def apply(records: Iterator[Array[Byte]]): Iterator[InternalRow] = {
         records.flatMap { r =>
           val recordStr = new String(r, csvOptions.charset)
-          rowParser(lineReader.parseLine(recordStr), 0)
+          val record = lineReader.parseLine(recordStr)
+          if (record != null) {
+            rowParser(record, 0)
+          } else {
+            /**
+             * When spark receives unacceptable byte arrays from Kinesis streams,
+             * this code path is executed.
+             */
+            logWarning(s"Can't parse an input record: $recordStr")
+            None
+          }
         }
       }
     }
