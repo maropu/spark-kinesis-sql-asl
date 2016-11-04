@@ -3,6 +3,7 @@
 Structured Streaming integration for Amazon Kinesis
 
 ### How to use
+
 For the Kinesis integration, you need to launch spark-shell with this compiled jar.
 
     $ git clone https://github.com/maropu/spark-kinesis-sql-asl.git
@@ -79,15 +80,35 @@ The following configurations are optional:
  * `format`: \["default", "csv", "json", "libsvm"\] (default: "default")
 
     A stream format of input stream data. Each format has configuration prameters:
-    [csv](./external/src/main/scala/org/apache/spark/sql/execution/datasources/csv/CSVKinesisValueFormat.scala#L33),
-    [json](./external/src/main/scala/org/apache/spark/sql/execution/datasources/json/JsonKinesisValueFormat.scala#L36),
-    and [libsvm](./external/src/main/scala/org/apache/spark/ml/source/libsvm/LibSVMKinesisValueFormat.scala#L39)
+    [csv](./external/kinesis-sql-asl/src/main/scala/org/apache/spark/sql/execution/datasources/csv/CSVKinesisValueFormat.scala#L34),
+    [json](./external/kinesis-sql-asl/src/main/scala/org/apache/spark/sql/execution/datasources/json/JsonKinesisValueFormat.scala#L36),
+    and [libsvm](./external/kinesis-sql-asl/src/main/scala/org/apache/spark/ml/source/libsvm/LibSVMKinesisValueFormat.scala#L39)
+
+ * `softLimitMaxRecordsPerTrigger`: (default: "-1")
+
+    If a positive value is set, limit maximum processing number of records per trigger to prevent
+    a job from having many records in a batch. Note that this is a soft limit, so the actual
+    processing number of records goes beyond the value.
+
+ * `limitMaxRecordsToInferSchema`: (default: 10000000)
+
+    Limit the number of records fetched from a shard to infer a schema. This source reads
+    stream data from the earliest offset to a offset at current time. If the number of records
+    goes beyond this value, it stops reading subsequent data.
 
  * `failOnDataLoss`: \["true", "false"\] (default: "false")
 
     Whether to fail the query when it's possible that data is lost (e.g., topics are deleted, or
     offsets are out of range). This may be a false alarm. You can disable it when it doesn't work
     as you expected.
+
+### Points to Remember
+
+Note that the total number of cores in executors must be bigger than the number of shards assigned
+in streams because this source implementation internally uses
+[Spark Streaming for Kinesis](https://github.com/apache/spark/tree/master/external/kinesis-asl),
+so Kinesis receivers use as many cores as a total shard number. More details can be found in
+[the Spark Streaming documentation](http://spark.apache.org/docs/latest/streaming-programming-guide.html#points-to-remember-1).
 
 ### Bug reports
 

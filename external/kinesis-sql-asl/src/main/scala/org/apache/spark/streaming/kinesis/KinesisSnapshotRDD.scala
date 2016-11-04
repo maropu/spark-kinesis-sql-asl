@@ -37,7 +37,7 @@ private[kinesis] case class KinesisSnapshotPartition(
   fromSeqNumber: String) extends Partition
 
 /**
- * A RDD holding stream data at from the earliest to current time.
+ * A RDD that reads stream data from the earliest offset to a offset at current time.
  * This is used for inferring the schema of stream data.
  */
 private[spark] class KinesisSnapshotRDD(
@@ -45,9 +45,8 @@ private[spark] class KinesisSnapshotRDD(
     regionName: String,
     endpointUrl: String,
     streams: Seq[String],
-    recordLimitForPartition: Int = 10000,
-    retryTimeoutMs: Int = 10000,
-    messageHandler: Record => Array[Byte] = KinesisSnapshotRDD.msgHandler,
+    limitMaxRecordsToInferSchema: Int,
+    retryTimeoutMs: Int,
     awsCredentialsOption: Option[SerializableAWSCredentials] = None,
     private val currentTime: Date = new Date(System.currentTimeMillis())
   ) extends RDD[Array[Byte]](sc, Nil) with Logging {
@@ -81,8 +80,8 @@ private[spark] class KinesisSnapshotRDD(
     val range = SequenceNumberRange(
       partition.streamName, partition.shardId, partition.fromSeqNumber, null)
     new KinesisSnapshotIterator(
-      credentials, endpointUrl, regionName, range, currentTime, recordLimitForPartition,
-      retryTimeoutMs).map(messageHandler)
+      credentials, endpointUrl, regionName, range, currentTime, limitMaxRecordsToInferSchema,
+      retryTimeoutMs).map(KinesisSnapshotRDD.msgHandler)
   }
 }
 
@@ -102,7 +101,7 @@ private class KinesisSnapshotIterator(
     regionId: String,
     range: SequenceNumberRange,
     currentTime: Date,
-    recordLimitForPartition: Int,
+    limitMaxRecordsToInferSchema: Int,
     retryTimeoutMs: Int)
   extends KinesisSequenceRangeIterator(
     credentials,
@@ -118,7 +117,7 @@ private class KinesisSnapshotIterator(
     try {
       val record = super.getNext()
       val recordTime = record.getApproximateArrivalTimestamp
-      if (currentTime.compareTo(recordTime) < 0 || _numReadRecord >= recordLimitForPartition) {
+      if (currentTime.compareTo(recordTime) < 0 || _numReadRecord >= limitMaxRecordsToInferSchema) {
         finished = true
       }
       _numReadRecord = _numReadRecord + 1

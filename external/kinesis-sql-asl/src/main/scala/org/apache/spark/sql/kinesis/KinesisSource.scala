@@ -22,7 +22,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import com.amazonaws.auth.AWSCredentialsProvider
+import com.amazonaws.auth.{AWSCredentialsProvider, DefaultAWSCredentialsProviderChain}
 import com.amazonaws.services.kinesis.AmazonKinesisClient
 
 import org.apache.spark.internal.Logging
@@ -68,10 +68,10 @@ private[kinesis] class KinesisSource(
     sqlContext: SQLContext,
     metadataPath: String,
     userSpecifiedSchema: Option[StructType],
-    credentialProvider: AWSCredentialsProvider,
     sourceOptions: Map[String, String])
   extends Source with Logging {
 
+  import KinesisSource._
   import KinesisSourceOffset._
 
   /** A holder for stream blocks stored in workers */
@@ -83,18 +83,11 @@ private[kinesis] class KinesisSource(
 
   private val kinesisOptions = new KinesisOptions(sourceOptions)
   private val kinesisClient = {
-    val cli = new AmazonKinesisClient(credentialProvider)
+    val cli = new AmazonKinesisClient(serializableAWSCredentials)
     cli.setEndpoint(kinesisOptions.endpointUrl)
     cli
   }
 
-  private val serializableAWSCredentials = {
-    val awsCredentials = credentialProvider.getCredentials
-    SerializableAWSCredentials(
-      awsCredentials.getAWSAccessKeyId,
-      awsCredentials.getAWSSecretKey
-    )
-  }
 
   private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
@@ -489,6 +482,14 @@ private[kinesis] class KinesisSource(
 
 private[kinesis] object KinesisSource {
 
+  val serializableAWSCredentials = {
+    val awsCredentials = new DefaultAWSCredentialsProviderChain().getCredentials
+    SerializableAWSCredentials(
+      awsCredentials.getAWSAccessKeyId,
+      awsCredentials.getAWSSecretKey
+    )
+  }
+
   def withTimestamp(schema: StructType): StructType = {
     StructType(StructField("timestamp", TimestampType, nullable = false) +: schema)
   }
@@ -502,7 +503,10 @@ private[kinesis] object KinesisSource {
       sqlContext.sparkContext,
       kinesisOptions.regionId,
       kinesisOptions.endpointUrl,
-      kinesisOptions.streamNames
+      kinesisOptions.streamNames,
+      limitMaxRecordsToInferSchema = kinesisOptions.limitMaxRecordsToInferSchema,
+      retryTimeoutMs = kinesisOptions.retryTimeoutMs,
+      awsCredentialsOption = Some(serializableAWSCredentials)
     )
     if (baseRdd.isEmpty()) {
       throw new IllegalStateException("No stream data exists for inferring a schema")

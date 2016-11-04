@@ -55,7 +55,6 @@ private[kinesis] class KinesisSourceProvider extends StreamSourceProvider
       sqlContext,
       metadataPath,
       userSpecifiedSchema.map(withTimestamp),
-      new DefaultAWSCredentialsProviderChain(),
       parameters)
   }
 
