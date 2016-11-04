@@ -25,7 +25,7 @@ import com.amazonaws.services.kinesis.model.Record
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.storage.{BlockId, StorageLevel}
-import org.apache.spark.streaming.{Duration, StreamingContext, Time}
+import org.apache.spark.streaming.{Milliseconds, StreamingContext, Time}
 import org.apache.spark.streaming.kinesis.KinesisSourceDStream.KinesisSourceType
 import org.apache.spark.streaming.receiver.Receiver
 import org.apache.spark.streaming.scheduler.ReceivedBlockInfo
@@ -37,7 +37,6 @@ private[spark] class KinesisSourceDStream(
     regionName: String,
     initialPositionInStream: InitialPositionInStream,
     checkpointAppName: String,
-    checkpointInterval: Duration,
     storageLevel: StorageLevel,
     @transient callbackFunc:
       (Array[BlockId], Array[SequenceNumberRanges], Array[Boolean], Array[Long]) => Unit,
@@ -49,7 +48,7 @@ private[spark] class KinesisSourceDStream(
     regionName,
     initialPositionInStream,
     checkpointAppName,
-    checkpointInterval,
+    Milliseconds(0), // Not used
     storageLevel,
     KinesisSourceDStream.msgHandler,
     awsCredentialsOption) {
@@ -81,7 +80,7 @@ private[spark] class KinesisSourceDStream(
 
   override def getReceiver(): Receiver[KinesisSourceType] = {
     new KinesisReceiver(streamName, endpointUrl, regionName, initialPositionInStream,
-      checkpointAppName, checkpointInterval, storageLevel, KinesisSourceDStream.msgHandler,
+      checkpointAppName, Milliseconds(0), storageLevel, KinesisSourceDStream.msgHandler,
       awsCredentialsOption,
       /**
        * Disables automatically running Kinesis chekpoints in receivers because Spark does

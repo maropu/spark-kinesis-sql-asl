@@ -109,7 +109,6 @@ private[kinesis] class KinesisSource(
         kinesisOptions.regionId,
         kinesisOptions.initialPositionInStream,
         kinesisOptions.checkpointName,
-        Milliseconds(kinesisOptions.pollTimeoutMs),
         StorageLevel.MEMORY_AND_DISK,
         collectKinesisStreamBlockData,
         Some(serializableAWSCredentials)
