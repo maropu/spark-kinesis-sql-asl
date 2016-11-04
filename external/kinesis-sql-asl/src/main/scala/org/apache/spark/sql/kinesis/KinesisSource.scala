@@ -40,6 +40,29 @@ import org.apache.spark.util.SystemClock
 
 /**
  * A [[Source]] that uses the Kinesis Client Library to reads data from Amazon Kinesis.
+ *
+ * - The [[KinesisSourceOffset]] is the custom [[Offset]] defined for this source that contains
+ *   a map of [[KinesisShard]] -> sequence number.
+ *
+ * - The [[KinesisSource]] written to do the following.
+ *
+ *   - When the source is created and `initialShardSeqNumbers` is initially evaluated, it launches
+ *     [[StreamingContext]] and start Kinesis receivers to store incoming stream blocks
+ *     in [[org.apache.spark.storage.BlockManager]]. The available stream blocks are reported
+ *     via callback function `collectKinesisStreamBlockData` and collected
+ *     in `streamBlocksInStores`.
+ *
+ *   - `getOffset()` returns the latest available offset of stream blocks in `streamBlocksInStore`,
+ *     which is returned as a [[KinesisSourceOffset]]. The latest offset consists of
+ *     the latest sequence numbers of shards in `shardIdToLatestStoredSeqNum` and the sequence
+ *     numbers are updated every the function `collectKinesisStreamBlockData` call.
+ *
+ *   - `getBatch()` returns a DF including data between the offsets (`start offset`, `end offset`],
+ *     i.e. `start offset` is exclusive because data in `start offset` have already
+ *     been processed in a previous trigger.
+ *
+ *   - The DF returned is based on a [[KinesisSourceBlockRDD]] which consists of stream blocks
+ *     stored in executors.
  */
 private[kinesis] class KinesisSource(
     sqlContext: SQLContext,
