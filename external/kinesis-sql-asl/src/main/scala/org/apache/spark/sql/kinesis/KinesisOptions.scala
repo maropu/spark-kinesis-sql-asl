@@ -32,12 +32,12 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
   @transient private val caseSensitiveParams = new CaseInsensitiveMap(parameters)
 
   private def getBool(paramName: String, default: Boolean = false): Boolean = {
-    val param = parameters.getOrElse(paramName, default.toString)
+    val param = caseSensitiveParams.getOrElse(paramName, default.toString)
     if (param == null) {
       default
-    } else if (param.toLowerCase == "true") {
+    } else if (param == "true") {
       true
-    } else if (param.toLowerCase == "false") {
+    } else if (param == "false") {
       false
     } else {
       throw new Exception(s"$paramName flag can be true or false")
@@ -45,7 +45,7 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
   }
 
   private def getInt(paramName: String, default: Int): Int = {
-    val paramValue = parameters.get(paramName)
+    val paramValue = caseSensitiveParams.get(paramName)
     paramValue match {
       case None => default
       case Some(null) => default
@@ -75,14 +75,14 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
     s"kinesis-checkpoint-${streamNames.sorted.mkString("-")}-${sdf.format(new Date())}"
   })
 
-  val format = parameters.get("format").map {
+  val format = caseSensitiveParams.get("format").map {
     case format if Set("csv", "json", "libsvm").contains(format) => format
     case unknownFormat => throw new IllegalArgumentException(s"Unknown format: $unknownFormat")
   }.getOrElse {
     "default"
   }
 
-  val initialPositionInStream = parameters.get("initialPositionInStream").map {
+  val initialPositionInStream = caseSensitiveParams.get("initialPositionInStream").map {
     case "latest" => InitialPositionInStream.LATEST
     case "earliest" | "trim_horizon" => InitialPositionInStream.TRIM_HORIZON
     case unknownPos => throw new IllegalArgumentException(s"Unknown position: $unknownPos")
