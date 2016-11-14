@@ -35,8 +35,6 @@ import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, StorageLevel, StreamBlockId}
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kinesis._
-import org.apache.spark.streaming.util.RecurringTimerWrapper
-import org.apache.spark.util.SystemClock
 
 
 /**
@@ -115,8 +113,6 @@ private[kinesis] class KinesisSource(
     }
   }
 
-  private var purgeThread: RecurringTimerWrapper = _
-
   /** This lock protects `shardIdToLatestStoredSeqNumber` and `streamBlocksInBMs`. */
   private val lockForUpdatingStreamBlockInfo = new ReentrantLock(true)
 
@@ -128,10 +124,8 @@ private[kinesis] class KinesisSource(
   /**
    * Sequence number ranges added to the current block being generated. Accessing and updating
    * of this map must be synchronized with `shardIdToLatestStoredSeqNumber`.
-   *
-   * TODO: Need to replace this array with a queue?
    */
-  private var streamBlocksInBMs = mutable.ArrayBuffer[StreamBlockInfo]()
+  private val streamBlocksInBMs = mutable.Queue[StreamBlockInfo]()
 
   /**
    * A holder of the offset until which processes have been done.
@@ -159,9 +153,6 @@ private[kinesis] class KinesisSource(
     // Launch a spark streaming context
     _ssc.union(kinesisStreams).foreachRDD(_ => {})
     _ssc.start()
-
-    // Then, start a purge thread
-    purgeThread = startPurgeThread()
 
     seqNumbers
   }
@@ -228,43 +219,6 @@ private[kinesis] class KinesisSource(
           s"(${shard.streamName}, ${shard.shardId}, $latestSeqNumber)"
         }.mkString(", "))
     }
-  }
-
-  private def purge(): Unit = {
-    synchronizeStreamBlocks {
-      currentOffset.map { offset =>
-        val kinesisCurrentOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
-        val (purged, survived) = streamBlocksInBMs.partition {
-          case (_, SequenceNumberRanges(ranges), _, _) =>
-
-          ranges.exists { range =>
-            val kinesisShard = KinesisShard(range.streamName, range.shardId)
-            val currentSeqNumber = kinesisCurrentOffset.getOrElse(kinesisShard, {
-              reportDataLoss(s"Unknown shard detected: $kinesisShard")
-              minimumSeqNumber
-            })
-            range.toSeqNumber <= currentSeqNumber
-          }
-        }
-        streamBlocksInBMs = survived
-        if (purged.nonEmpty) {
-          reportDataLoss(s"Purged the ${purged.size} blocks of unused stream blocks")
-        }
-      }
-    }
-  }
-
-  /**
-   * Start a thread to purge unnecessary entries in `streamBlocksInBMs` with
-   * the given checkpoint duration.
-   */
-  private def startPurgeThread(): RecurringTimerWrapper = {
-    val period = Milliseconds(kinesisOptions.purgeIntervalMs).milliseconds
-    val threadId = s"Kinesis Purge Thread for Streams: ${kinesisOptions.streamNames.mkString(", ")}"
-    val timer = new RecurringTimerWrapper(new SystemClock(), period, _ => purge(), threadId)
-    timer.start()
-    logInfo(s"Started a thread: $threadId")
-    timer
   }
 
   override def getOffset: Option[Offset] = {
@@ -370,35 +324,34 @@ private[kinesis] class KinesisSource(
       }
     }.toSeq
 
-    def isSameShard(x: SequenceNumberRange, y: SequenceNumberRange): Boolean = {
-      x.streamName == y.streamName && x.shardId == y.shardId
-    }
-
-    val targetBlocks = synchronizeStreamBlocks {
-      val (candidates, notUsed) = streamBlocksInBMs.partition {
-        case (_, SequenceNumberRanges(ranges), _, _) =>
-
+    // Helper function to check if ranges are qualified
+    def checkIfQualified(block: StreamBlockInfo): Boolean = block match {
+      case (_, SequenceNumberRanges(ranges), _, _) =>
         ranges.forall { range =>
           targetRanges.exists { targetRange =>
-            if (isSameShard(range, targetRange)) {
-              targetRange.fromSeqNumber < range.fromSeqNumber &&
-                range.toSeqNumber <= targetRange.toSeqNumber
+            if (range.streamName == targetRange.streamName &&
+                range.shardId == targetRange.shardId) {
+              if (range.fromSeqNumber <= targetRange.fromSeqNumber) {
+                reportDataLoss(s"Illegal stream block detected: ${block._2}")
+              }
+              range.toSeqNumber <= targetRange.toSeqNumber
             } else {
               false
             }
           }
         }
+    }
+
+    val targetBlocks = synchronizeStreamBlocks {
+      val candidiateBlocks = mutable.ArrayBuffer[StreamBlockInfo]()
+      while (checkIfQualified(streamBlocksInBMs.head)) {
+        candidiateBlocks += streamBlocksInBMs.dequeue()
       }
 
-      streamBlocksInBMs = notUsed
-
-      // Update the offset where processes have been done
-      currentOffset = Some(end)
-
-      // If we cannot find some of qualified stream blocks in `streamBlocksInBMs`,
+      // If we cannot find any qualified stream block in `streamBlocksInBMs`,
       // we fetch all the data via Kinesis iterators.
-      if (candidates.nonEmpty) {
-        candidates.map(d => (d._1, d._2, d._3)).unzip3
+      if (candidiateBlocks.nonEmpty) {
+        candidiateBlocks.map(d => (d._1, d._2, d._3)).unzip3
       } else {
         null
       }
@@ -407,6 +360,9 @@ private[kinesis] class KinesisSource(
         (invalidStreamBlockId, SequenceNumberRanges(targetRanges(i)), false)
       }.unzip3
     }
+
+    // Update the offset where processes have been done
+    currentOffset = Some(end)
 
     // Create a RDD that reads from Amazon Kinesis and get inputs as binary data
     // TODO: How to handle preferred locations on cached storage blocks?
@@ -463,7 +419,6 @@ private[kinesis] class KinesisSource(
   }
 
   override def stop(): Unit = {
-    purgeThread.stop(interruptTimer = true)
     _ssc.stop(stopSparkContext = false, stopGracefully = true)
   }
 

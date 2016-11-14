@@ -89,7 +89,7 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
   }.getOrElse {
     InitialPositionInStream.LATEST
   }
-  
+
   val reportIntervalMs = getInt("reportIntervalMs", 1000)
 
   val softLimitMaxRecordsPerTrigger = getInt("softLimitMaxRecordsPerTrigger", -1)
