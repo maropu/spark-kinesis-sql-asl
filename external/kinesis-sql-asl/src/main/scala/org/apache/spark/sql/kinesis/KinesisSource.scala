@@ -22,7 +22,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import com.amazonaws.auth.{AWSCredentialsProvider, DefaultAWSCredentialsProviderChain}
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.services.kinesis.AmazonKinesisClient
 
 import org.apache.spark.internal.Logging
@@ -38,6 +38,7 @@ import org.apache.spark.streaming.kinesis._
 import org.apache.spark.streaming.util.RecurringTimerWrapper
 import org.apache.spark.util.SystemClock
 
+
 /**
  * A [[Source]] that uses the Kinesis Client Library to reads data from Amazon Kinesis.
  *
@@ -47,9 +48,9 @@ import org.apache.spark.util.SystemClock
  * - The [[KinesisSource]] written to do the following.
  *
  *   - When the source is created and `initialShardSeqNumbers` is initially evaluated, it launches
- *     [[StreamingContext]] and start Kinesis receivers to store incoming stream blocks
- *     in [[org.apache.spark.storage.BlockManager]]. The available stream blocks are reported
- *     via callback function `collectKinesisStreamBlockData` and collected
+ *     [[StreamingContext]] and starts Kinesis receivers to store incoming stream blocks in
+ *     executor-side [[org.apache.spark.storage.BlockManager]]s. The available stream blocks are
+ *     reported via a callback function `collectKinesisStreamBlockData` and collected
  *     in `streamBlocksInStores`.
  *
  *   - `getOffset()` returns the latest available offset of stream blocks in `streamBlocksInStore`,
@@ -62,7 +63,7 @@ import org.apache.spark.util.SystemClock
  *     been processed in a previous trigger.
  *
  *   - The DF returned is based on a [[KinesisSourceBlockRDD]] which consists of stream blocks
- *     stored in executors.
+ *     stored in the executor-side [[org.apache.spark.storage.BlockManager]]s.
  */
 private[kinesis] class KinesisSource(
     sqlContext: SQLContext,
@@ -88,10 +89,8 @@ private[kinesis] class KinesisSource(
     cli
   }
 
-
   private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
-    // TODO: How to handle the oversubscription of #cores in executors
     val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
     logInfo(s"Create $numStreams streams for $stream")
     (0 until numStreams).map { i =>
@@ -169,7 +168,6 @@ private[kinesis] class KinesisSource(
 
   private val schemaWithoutTimestamp = StructType(schema.drop(1))
 
-
   private val invalidStreamBlockId = StreamBlockId(0, 0L)
   private val minimumSeqNumber = ""
 
@@ -193,30 +191,29 @@ private[kinesis] class KinesisSource(
    */
   private def collectKinesisStreamBlockData(
       blockIds: Array[BlockId],
-      arrayOfseqNumberRanges: Array[SequenceNumberRanges],
+      arrayOfSeqNumberRanges: Array[SequenceNumberRanges],
       isBlockIdValid: Array[Boolean],
-      arrayOfnumRecords: Array[Long]): Unit = {
+      arrayOfNumRecords: Array[Long]): Unit = {
     if (blockIds.length == 0) return
-    logInfo(s"Received kinesis stream blocked data: ${arrayOfseqNumberRanges.mkString(", ")}")
-    synchronizeStreamBlocks {
-      val streamBlocks = Seq.tabulate(blockIds.length) { i =>
-        val isValid = if (isBlockIdValid.length == 0) true else isBlockIdValid(i)
-        (blockIds(i), arrayOfseqNumberRanges(i), isValid, arrayOfnumRecords(i))
-      }
-      streamBlocks.map { case streamBlock =>
-        streamBlocksInStores += streamBlock
 
-        // Update the latest sequence numbers of registered shards
-        streamBlock._2.ranges.map { case range =>
-          val shard = KinesisShard(range.streamName, range.shardId)
-          (shard, range.toSeqNumber)
-        }.groupBy(_._1).mapValues { value =>
-          value.map(_._2).max
-        }.foreach { case (shard, latestSeqNumber) =>
-          val seqNumber = shardIdToLatestStoredSeqNum.asJava.getOrDefault(shard, minimumSeqNumber)
-          shardIdToLatestStoredSeqNum.put(shard, Seq(latestSeqNumber, seqNumber).max)
-        }
+    logDebug(s"Received kinesis stream blocked data: ${arrayOfSeqNumberRanges.mkString(", ")}")
+
+    // Pre-process for updating stream block information
+    val newBlocks = Seq.tabulate(blockIds.length) { i =>
+      val isValid = if (isBlockIdValid.length == 0) true else isBlockIdValid(i)
+      (blockIds(i), arrayOfSeqNumberRanges(i), isValid, arrayOfNumRecords(i))
+    }
+    val newLatestSeqNumbers = newBlocks.flatMap { case (_, SequenceNumberRanges(ranges), _, _) =>
+      ranges.map { case range =>
+        val shard = KinesisShard(range.streamName, range.shardId)
+        (shard, range.toSeqNumber)
       }
+    }.groupBy(_._1).mapValues(_.map(_._2).max)
+
+    // Append pending blocks and update the latest sequence numbers of shards
+    synchronizeStreamBlocks {
+      streamBlocksInStores ++= newBlocks
+      shardIdToLatestStoredSeqNum ++= newLatestSeqNumbers
       logDebug(s"Pending stream blocks are: ${streamBlocksInStores.map(_._2).mkString(", ")}")
       logDebug("shardIdToLatestStoredSeqNum:"
         + shardIdToLatestStoredSeqNum.map { case (shard, latestSeqNumber) =>
