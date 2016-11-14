@@ -78,16 +78,16 @@ private[kinesis] class KinesisSource(
   /** A holder for stream blocks stored in workers */
   type StreamBlockInfo = (BlockId, SequenceNumberRanges, Boolean, Long)
 
-  private val _sparkSession = sqlContext.sparkSession
-  private val _sc = sqlContext.sparkContext
-  private val _ssc = new StreamingContext(_sc, Seconds(1))
-
   private val kinesisOptions = new KinesisOptions(sourceOptions)
   private val kinesisClient = {
     val cli = new AmazonKinesisClient(serializableAWSCredentials)
     cli.setEndpoint(kinesisOptions.endpointUrl)
     cli
   }
+
+  private val _sparkSession = sqlContext.sparkSession
+  private val _sc = sqlContext.sparkContext
+  private val _ssc = new StreamingContext(_sc, Milliseconds(kinesisOptions.reportIntervalMs))
 
   private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
@@ -266,10 +266,8 @@ private[kinesis] class KinesisSource(
     synchronizeStreamBlocks {
       val offset = kinesisOptions.softLimitMaxRecordsPerTrigger match {
         case limit if limit > 0 =>
-          /**
-           * Control processing number of records per trigger to prevent Spark from
-           * invoking many tasks in a job.
-           */
+          // Control processing number of records per trigger to prevent Spark from
+          // invoking many tasks in a job.
           limitBatch(limit)
         case _ =>
           KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone().toMap)
@@ -386,13 +384,11 @@ private[kinesis] class KinesisSource(
 
       streamBlocksInStores = notUsed
 
-      /** Update the offset where processes have been done. */
+      // Update the offset where processes have been done
       currentOffset = Some(end)
 
-      /**
-       * TODO: If we cannot find some of qualified stream blocks in `streamBlocksInStores`,
-       * we fetch all the data via vanilla Kinesis iterators.
-       */
+      // If we cannot find some of qualified stream blocks in `streamBlocksInStores`,
+      // we fetch all the data via Kinesis iterators.
       if (candidates.nonEmpty) {
         candidates.map(d => (d._1, d._2, d._3)).unzip3
       } else {

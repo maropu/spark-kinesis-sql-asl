@@ -84,6 +84,13 @@ The following configurations are optional:
     [json](./external/kinesis-sql-asl/src/main/scala/org/apache/spark/sql/execution/datasources/json/JsonKinesisValueFormat.scala#L36),
     and [libsvm](./external/kinesis-sql-asl/src/main/scala/org/apache/spark/ml/source/libsvm/LibSVMKinesisValueFormat.scala#L39)
 
+ * `reportIntervalMs`: (default: "1000")
+
+    Report interval time in milliseconds. This source implementation internally uses
+    [Kinesis receivers in Spark Streaming](https://github.com/apache/spark/tree/master/external/kinesis-asl)
+    and tracks available stream blocks and latest sequence numbers of shards by using the metadata
+    that the receivers report at this interval.
+
  * `softLimitMaxRecordsPerTrigger`: (default: "-1")
 
     If a positive value is set, limit maximum processing number of records per trigger to prevent
@@ -105,9 +112,8 @@ The following configurations are optional:
 ### Points to Remember
 
 Note that the total number of cores in executors must be bigger than the number of shards assigned
-in streams because this source implementation internally uses
-[Spark Streaming for Kinesis](https://github.com/apache/spark/tree/master/external/kinesis-asl),
-so Kinesis receivers use as many cores as a total shard number. More details can be found in
+in streams because this source depends on the Kinesis integration and their receivers use
+as many cores as a total shard number. More details can be found in
 [the Spark Streaming documentation](http://spark.apache.org/docs/latest/streaming-programming-guide.html#points-to-remember-1).
 
 ### Bug reports
