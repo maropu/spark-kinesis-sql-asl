@@ -51,11 +51,11 @@ import org.apache.spark.util.SystemClock
  *     [[StreamingContext]] and starts Kinesis receivers to store incoming stream blocks in
  *     executor-side [[org.apache.spark.storage.BlockManager]]s. The available stream blocks are
  *     reported via a callback function `collectKinesisStreamBlockData` and collected
- *     in `streamBlocksInStores`.
+ *     in `streamBlocksInBMs`.
  *
- *   - `getOffset()` returns the latest available offset of stream blocks in `streamBlocksInStore`,
+ *   - `getOffset()` returns the latest available offset of stream blocks in `streamBlocksInBMs`,
  *     which is returned as a [[KinesisSourceOffset]]. The latest offset consists of
- *     the latest sequence numbers of shards in `shardIdToLatestStoredSeqNum` and the sequence
+ *     the latest sequence numbers of shards in `shardIdToLatestStoredSeqNumber` and the sequence
  *     numbers are updated every the function `collectKinesisStreamBlockData` call.
  *
  *   - `getBatch()` returns a DF including data between the offsets (`start offset`, `end offset`],
@@ -89,6 +89,13 @@ private[kinesis] class KinesisSource(
   private val _sc = sqlContext.sparkContext
   private val _ssc = new StreamingContext(_sc, Milliseconds(kinesisOptions.reportIntervalMs))
 
+  /**
+   * We internally use Spark Streaming logic to track latest sequence numbers of shards in streams
+   * because Amazon Kinesis has no efficient API to track these numbers and tracking them
+   * in a driver side causes excess load in batch processing.
+   *
+   * TODO: We need to reconsider this design.
+   */
   private lazy val kinesisStreams = kinesisOptions.streamNames.flatMap { stream =>
     // Creates 1 Kinesis Receiver/input DStream for each shard
     val numStreams = kinesisClient.describeStream(stream).getStreamDescription.getShards.size
@@ -109,25 +116,26 @@ private[kinesis] class KinesisSource(
   }
 
   private var purgeThread: RecurringTimerWrapper = _
-  private val blockLock = new ReentrantLock(false)
+
+  /** This lock protects `shardIdToLatestStoredSeqNumber` and `streamBlocksInBMs`. */
+  private val lockForUpdatingStreamBlockInfo = new ReentrantLock(true)
 
   /**
    * Latest sequence number ranges that have been stored successfully.
    */
-  private val shardIdToLatestStoredSeqNum = mutable.Map[KinesisShard, String]()
+  private val shardIdToLatestStoredSeqNumber = mutable.Map[KinesisShard, String]()
 
   /**
-   * Sequence number ranges added to the current block being generated.
-   * Accessing and updating of this map is synchronized with `shardIdToLatestStoredSeqNum`
-   * by lock `blockLock`.
+   * Sequence number ranges added to the current block being generated. Accessing and updating
+   * of this map must be synchronized with `shardIdToLatestStoredSeqNumber`.
    *
    * TODO: Need to replace this array with a queue?
    */
-  private var streamBlocksInStores = mutable.ArrayBuffer[StreamBlockInfo]()
+  private var streamBlocksInBMs = mutable.ArrayBuffer[StreamBlockInfo]()
 
   /**
    * A holder of the offset until which processes have been done.
-   * Entries from an earlier offset to `currentOffset` in `streamBlocksInStores` are safely
+   * Entries from an earlier offset to `currentOffset` in `streamBlocksInBMs` are safely
    * removed in the purge thread.
    */
   private var currentOffset: Option[Offset] = None
@@ -142,7 +150,7 @@ private[kinesis] class KinesisSource(
     }.shardToSeqNum
 
     seqNumbers.map { case (shard, seqNumber) =>
-      shardIdToLatestStoredSeqNum += shard -> seqNumber
+      shardIdToLatestStoredSeqNumber += shard -> seqNumber
     }
 
     // Initialize a current offset with earliest one
@@ -173,7 +181,7 @@ private[kinesis] class KinesisSource(
 
   private def synchronizeStreamBlocks[T](func: => T): Option[T] = {
     var retValue: Option[T] = None
-    blockLock.lock()
+    lockForUpdatingStreamBlockInfo.lock()
     try {
       retValue = Option(func)
     } catch {
@@ -181,7 +189,7 @@ private[kinesis] class KinesisSource(
         reportDataLoss("May lose data because of an exception occurred "
           + "when updating stream blocks information: " + e)
     } finally {
-      blockLock.unlock()
+      lockForUpdatingStreamBlockInfo.unlock()
     }
     retValue
   }
@@ -212,11 +220,11 @@ private[kinesis] class KinesisSource(
 
     // Append pending blocks and update the latest sequence numbers of shards
     synchronizeStreamBlocks {
-      streamBlocksInStores ++= newBlocks
-      shardIdToLatestStoredSeqNum ++= newLatestSeqNumbers
-      logDebug(s"Pending stream blocks are: ${streamBlocksInStores.map(_._2).mkString(", ")}")
-      logDebug("shardIdToLatestStoredSeqNum:"
-        + shardIdToLatestStoredSeqNum.map { case (shard, latestSeqNumber) =>
+      streamBlocksInBMs ++= newBlocks
+      shardIdToLatestStoredSeqNumber ++= newLatestSeqNumbers
+      logDebug(s"Pending stream blocks are: ${streamBlocksInBMs.map(_._2).mkString(", ")}")
+      logDebug("shardIdToLatestStoredSeqNumber:"
+        + shardIdToLatestStoredSeqNumber.map { case (shard, latestSeqNumber) =>
           s"(${shard.streamName}, ${shard.shardId}, $latestSeqNumber)"
         }.mkString(", "))
     }
@@ -226,7 +234,7 @@ private[kinesis] class KinesisSource(
     synchronizeStreamBlocks {
       currentOffset.map { offset =>
         val kinesisCurrentOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
-        val (purged, survived) = streamBlocksInStores.partition {
+        val (purged, survived) = streamBlocksInBMs.partition {
           case (_, SequenceNumberRanges(ranges), _, _) =>
 
           ranges.exists { range =>
@@ -238,7 +246,7 @@ private[kinesis] class KinesisSource(
             range.toSeqNumber <= currentSeqNumber
           }
         }
-        streamBlocksInStores = survived
+        streamBlocksInBMs = survived
         if (purged.nonEmpty) {
           reportDataLoss(s"Purged the ${purged.size} blocks of unused stream blocks")
         }
@@ -247,7 +255,7 @@ private[kinesis] class KinesisSource(
   }
 
   /**
-   * Start a thread to purge unnecessary entries in `streamBlocksInStores` with
+   * Start a thread to purge unnecessary entries in `streamBlocksInBMs` with
    * the given checkpoint duration.
    */
   private def startPurgeThread(): RecurringTimerWrapper = {
@@ -270,7 +278,7 @@ private[kinesis] class KinesisSource(
           // invoking many tasks in a job.
           limitBatch(limit)
         case _ =>
-          KinesisSourceOffset(shardIdToLatestStoredSeqNum.clone().toMap)
+          KinesisSourceOffset(shardIdToLatestStoredSeqNumber.clone().toMap)
       }
       logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
       offset
@@ -281,7 +289,7 @@ private[kinesis] class KinesisSource(
   private def limitBatch(maxRecords: Int): KinesisSourceOffset = {
     currentOffset.map { offset =>
       val kinesisCurrentOffset = KinesisSourceOffset.getShardSeqNumbers(offset)
-      val (limitedOffset, numRecords) = streamBlocksInStores
+      val (limitedOffset, numRecords) = streamBlocksInBMs
         .foldLeft((mutable.Map(kinesisCurrentOffset.toSeq: _*), 0L)) {
             case ((offset, sumRecords), (_, SequenceNumberRanges(ranges), _, n)) =>
 
@@ -295,7 +303,7 @@ private[kinesis] class KinesisSource(
             (offset, sumRecords)
           }
       }
-      logDebug(s"Select $numRecords records from ${streamBlocksInStores.map(_._4).sum} records " +
+      logDebug(s"Select $numRecords records from ${streamBlocksInBMs.map(_._4).sum} records " +
         "to limit batch size per trigger")
       KinesisSourceOffset(limitedOffset.toMap)
     }.getOrElse {
@@ -367,7 +375,7 @@ private[kinesis] class KinesisSource(
     }
 
     val targetBlocks = synchronizeStreamBlocks {
-      val (candidates, notUsed) = streamBlocksInStores.partition {
+      val (candidates, notUsed) = streamBlocksInBMs.partition {
         case (_, SequenceNumberRanges(ranges), _, _) =>
 
         ranges.forall { range =>
@@ -382,12 +390,12 @@ private[kinesis] class KinesisSource(
         }
       }
 
-      streamBlocksInStores = notUsed
+      streamBlocksInBMs = notUsed
 
       // Update the offset where processes have been done
       currentOffset = Some(end)
 
-      // If we cannot find some of qualified stream blocks in `streamBlocksInStores`,
+      // If we cannot find some of qualified stream blocks in `streamBlocksInBMs`,
       // we fetch all the data via Kinesis iterators.
       if (candidates.nonEmpty) {
         candidates.map(d => (d._1, d._2, d._3)).unzip3
