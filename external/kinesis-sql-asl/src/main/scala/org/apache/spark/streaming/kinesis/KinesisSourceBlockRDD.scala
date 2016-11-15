@@ -49,6 +49,10 @@ private[spark] class KinesisSourceBlockRDD(
     KinesisSourceDStream.msgHandler,
     awsCredentialsOption) {
 
+  // If this is the first time this RDD is marked for persisting, register it
+  // with the SparkContext for cleanups and accounting. Do this only once.
+    sc.cleaner.foreach(_.registerRDDForCleanup(this))
+
   override def compute(split: Partition, context: TaskContext): Iterator[KinesisSourceType] = {
     val blockManager = SparkEnv.get.blockManager
     val partition = split.asInstanceOf[KinesisBackedBlockRDDPartition]

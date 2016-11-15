@@ -96,8 +96,6 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
 
   val limitMaxRecordsToInferSchema = getInt("limitMaxRecordsToInferSchema", 10000000)
 
-  val purgeIntervalMs = getInt("purgeInternalMs", 300 * 1000) // 5min by default
-
   val retryTimeoutMs = getInt("retryTimeoutMs", 10000)
 
   val failOnDataLoss = getBool("failOnDataLoss", false)

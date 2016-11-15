@@ -26,6 +26,7 @@ import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.services.kinesis.AmazonKinesisClient
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.BlockRDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JoinedRow
@@ -35,6 +36,8 @@ import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, StorageLevel, StreamBlockId}
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kinesis._
+import org.apache.spark.streaming.util.RecurringTimerWrapper
+import org.apache.spark.util.SystemClock
 
 
 /**
@@ -113,8 +116,28 @@ private[kinesis] class KinesisSource(
     }
   }
 
-  /** This lock protects `shardIdToLatestStoredSeqNumber` and `streamBlocksInBMs`. */
-  private val lockForUpdatingStreamBlockInfo = new ReentrantLock(true)
+  /**
+   * Thread to periodically remove stream blocks that are older than
+   * `kinesisOptions.reportIntervalMs` * 3.
+   */
+  private var rddCleanerThread: RecurringTimerWrapper = _
+
+  /**
+   * Duration for which the Source will remember each `BlockRDD` created.
+   */
+  private val rememberDuration: Duration = Milliseconds(kinesisOptions.reportIntervalMs * 3)
+
+  private val clock = new SystemClock()
+
+  /**
+   * RDDs that are generated in `getBatch` and still exist in executor-side block managers.
+   */
+  private val generatedRDDs = new mutable.HashMap[Time, KinesisSourceBlockRDD]()
+
+  /**
+   * This lock protects `generatedRDDs`.
+   */
+  private val lockForGeneratedRDDs = new ReentrantLock(true)
 
   /**
    * Latest sequence number ranges that have been stored successfully.
@@ -128,9 +151,12 @@ private[kinesis] class KinesisSource(
   private val streamBlocksInBMs = mutable.Queue[StreamBlockInfo]()
 
   /**
+   * This lock protects `shardIdToLatestStoredSeqNumber` and `streamBlocksInBMs`.
+   */
+  private val lockForStreamBlockInfo = new ReentrantLock(true)
+
+  /**
    * A holder of the offset until which processes have been done.
-   * Entries from an earlier offset to `currentOffset` in `streamBlocksInBMs` are safely
-   * removed in the purge thread.
    */
   private var currentOffset: Option[Offset] = None
 
@@ -154,6 +180,9 @@ private[kinesis] class KinesisSource(
     _ssc.union(kinesisStreams).foreachRDD(_ => {})
     _ssc.start()
 
+    // Then, start a cleaner thread
+    rddCleanerThread = startCleanerThread()
+
     seqNumbers
   }
 
@@ -170,9 +199,57 @@ private[kinesis] class KinesisSource(
   private val invalidStreamBlockId = StreamBlockId(0, 0L)
   private val minimumSeqNumber = ""
 
+  private def synchronizeGeneratedRDDs[T](func: => T): Option[T] = {
+    var retValue: Option[T] = None
+    lockForGeneratedRDDs.lock()
+    try {
+      retValue = Option(func)
+    } catch {
+      case e: Throwable =>
+        logWarning("Exception happened when handling `generatedRDDs`: " + e)
+    } finally {
+      lockForGeneratedRDDs.unlock()
+    }
+    retValue
+  }
+
+  /**
+   * Clear metadata that are older than `rememberDuration` of this Source.
+   */
+  private def clearMetadata(time: Time): Unit = {
+    synchronizeGeneratedRDDs {
+      val candidateRDDs = generatedRDDs.filter(_._1 <= (time - rememberDuration))
+      logDebug("Clearing references to old RDDs: [" +
+        candidateRDDs.map(x => s"${x._1} -> ${x._2.id}").mkString(", ") + "]")
+      generatedRDDs --= candidateRDDs.keys
+      candidateRDDs
+    }.map { oldRDDs =>
+      if (_sc.conf.getBoolean("spark.streaming.unpersist", true)) {
+        logDebug(s"Unpersisting old RDDs: ${oldRDDs.values.map(_.id).mkString(", ")}")
+        oldRDDs.values.foreach { case b: BlockRDD[_] =>
+          // Explicitly remove blocks of BlockRDD
+          logInfo(s"Removing blocks of RDD $b of time $time")
+          b.removeBlocks()
+        }
+      }
+      logDebug(s"Cleared ${oldRDDs.size} RDDs that were older than " +
+        s"${time - rememberDuration}: ${oldRDDs.keys.mkString(", ")}")
+    }
+  }
+
+  private def startCleanerThread(): RecurringTimerWrapper = {
+    val period = rememberDuration.milliseconds * 2
+    val threadId = s"Kinesis Stream Cleaner Thread: ${kinesisOptions.streamNames.mkString(", ")}"
+    val timer = new RecurringTimerWrapper(
+      new SystemClock(), period, t => clearMetadata(Time(t)), threadId)
+    timer.start()
+    logInfo(s"Started a cleaner thread: $threadId")
+    timer
+  }
+
   private def synchronizeStreamBlocks[T](func: => T): Option[T] = {
     var retValue: Option[T] = None
-    lockForUpdatingStreamBlockInfo.lock()
+    lockForStreamBlockInfo.lock()
     try {
       retValue = Option(func)
     } catch {
@@ -180,7 +257,7 @@ private[kinesis] class KinesisSource(
         reportDataLoss("May lose data because of an exception occurred "
           + "when updating stream blocks information: " + e)
     } finally {
-      lockForUpdatingStreamBlockInfo.unlock()
+      lockForStreamBlockInfo.unlock()
     }
     retValue
   }
@@ -364,8 +441,8 @@ private[kinesis] class KinesisSource(
     // Update the offset where processes have been done
     currentOffset = Some(end)
 
-    // Create a RDD that reads from Amazon Kinesis and get inputs as binary data
-    val baseRdd = new KinesisSourceBlockRDD(
+    // Generate a RDD that reads from Amazon Kinesis and get inputs as binary data
+    val sourceRdd = new KinesisSourceBlockRDD(
       _sc,
       kinesisOptions.regionId,
       kinesisOptions.endpointUrl,
@@ -375,9 +452,15 @@ private[kinesis] class KinesisSource(
       retryTimeoutMs = kinesisOptions.retryTimeoutMs,
       awsCredentialsOption = Option(serializableAWSCredentials)
     )
+
+    // Add a generated RDD in `generatedRDDs`
+    synchronizeGeneratedRDDs {
+      generatedRDDs.put(Time(clock.getTimeMillis()), sourceRdd)
+    }
+
     val serializableReadFunc = dataFormat.buildReader(
       _sparkSession, schemaWithoutTimestamp, sourceOptions)
-    val rdd = baseRdd.mapPartitionsInternal { iter =>
+    val rdd = sourceRdd.mapPartitionsInternal { iter =>
       val dataOnMem = iter.toSeq
       val timestampRows = dataOnMem.map(_._1).map(InternalRow(_))
       val valueRows = serializableReadFunc(dataOnMem.map(_._2).toIterator)
@@ -418,6 +501,7 @@ private[kinesis] class KinesisSource(
   }
 
   override def stop(): Unit = {
+    rddCleanerThread.stop(interruptTimer = false)
     _ssc.stop(stopSparkContext = false, stopGracefully = true)
   }
 
