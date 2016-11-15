@@ -94,7 +94,7 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
 
   val softLimitMaxRecordsPerTrigger = getInt("softLimitMaxRecordsPerTrigger", -1)
 
-  val limitMaxRecordsToInferSchema = getInt("limitMaxRecordsToInferSchema", 10000000)
+  val limitMaxRecordsToInferSchema = getInt("limitMaxRecordsToInferSchema", 100000)
 
   val retryTimeoutMs = getInt("retryTimeoutMs", 10000)
 

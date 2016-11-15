@@ -97,7 +97,7 @@ The following configurations are optional:
     a job from having many records in a batch. Note that this is a soft limit, so the actual
     processing number of records goes beyond the value.
 
- * `limitMaxRecordsToInferSchema`: (default: 10000000)
+ * `limitMaxRecordsToInferSchema`: (default: 100000)
 
     Limit the number of records fetched from a shard to infer a schema. This source reads
     stream data from the earliest offset to a offset at current time. If the number of records
