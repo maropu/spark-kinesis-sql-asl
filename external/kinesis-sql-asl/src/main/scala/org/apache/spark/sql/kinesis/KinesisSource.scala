@@ -344,7 +344,7 @@ private[kinesis] class KinesisSource(
 
     val targetBlocks = synchronizeStreamBlocks {
       val candidiateBlocks = mutable.ArrayBuffer[StreamBlockInfo]()
-      while (checkIfQualified(streamBlocksInBMs.head)) {
+      while (streamBlocksInBMs.nonEmpty && checkIfQualified(streamBlocksInBMs.head)) {
         candidiateBlocks += streamBlocksInBMs.dequeue()
       }
 
@@ -365,7 +365,6 @@ private[kinesis] class KinesisSource(
     currentOffset = Some(end)
 
     // Create a RDD that reads from Amazon Kinesis and get inputs as binary data
-    // TODO: How to handle preferred locations on cached storage blocks?
     val baseRdd = new KinesisSourceBlockRDD(
       _sc,
       kinesisOptions.regionId,
