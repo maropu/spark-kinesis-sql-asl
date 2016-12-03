@@ -18,6 +18,7 @@ package org.apache.spark.streaming.kinesis
 
 import java.util.List
 
+import scala.collection.JavaConverters._
 import scala.util.Random
 import scala.util.control.NonFatal
 
@@ -64,25 +65,6 @@ private[kinesis] class KinesisRecordProcessor[T](receiver: KinesisReceiver[T], w
   }
 
   /**
-   * Limit the number of processed records from Kinesis stream. This is because the KCL cannot
-   * control the number of aggregated records to be fetched even if we set `MaxRecords`
-   * in `KinesisClientLibConfiguration`. For example, if we set 10 to the number of max records
-   * in a worker and a producer aggregates two records into one message, the worker possibly
-   * 20 records every callback function called.
-   */
-  private def processRecordsWithLimit(
-                                       batch: List[Record], checkpointer: IRecordProcessorCheckpointer): Unit = {
-    val maxRecords = receiver.getCurrentLimit
-    if (batch.size() <= maxRecords) {
-      addRecords(batch, checkpointer)
-    } else {
-      for (start <- 0 until batch.size by maxRecords) {
-        addRecords(batch.subList(start, math.min(start + maxRecords, batch.size)), checkpointer)
-      }
-    }
-  }
-
-  /**
    * This method is called by the KCL when a batch of records is pulled from the Kinesis stream.
    * This is the record-processing bridge between the KCL's IRecordProcessor.processRecords()
    * and Spark Streaming's Receiver.store().
@@ -94,7 +76,16 @@ private[kinesis] class KinesisRecordProcessor[T](receiver: KinesisReceiver[T], w
   override def processRecords(batch: List[Record], checkpointer: IRecordProcessorCheckpointer) {
     if (!receiver.isStopped()) {
       try {
-        processRecordsWithLimit(batch, checkpointer)
+        // Limit the number of processed records from Kinesis stream. This is because the KCL cannot
+        // control the number of aggregated records to be fetched even if we set `MaxRecords`
+        // in `KinesisClientLibConfiguration`. For example, if we set 10 to the number of max
+        // records in a worker and a producer aggregates two records into one message, the worker
+        // possibly 20 records every callback function called.
+        batch.asScala.grouped(receiver.getCurrentLimit).foreach { batch =>
+          receiver.addRecords(shardId, batch.asJava)
+          logDebug(s"Stored: Worker $workerId stored ${batch.size} records for shardId $shardId")
+          receiver.setCheckpointer(shardId, checkpointer)
+        }
       } catch {
         case NonFatal(e) =>
           /*
