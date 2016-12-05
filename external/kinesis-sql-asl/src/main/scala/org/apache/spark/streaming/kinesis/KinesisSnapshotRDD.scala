@@ -90,7 +90,11 @@ private object KinesisSnapshotRDD {
   def msgHandler: (Record => Array[Byte]) = new (Record => Array[Byte]) with Serializable {
 
     override def apply(record: Record): Array[Byte] = {
-      record.getData.array
+      if (record != null) {
+        record.getData.array
+      } else {
+        Array.empty[Byte]
+      }
     }
   }
 }
