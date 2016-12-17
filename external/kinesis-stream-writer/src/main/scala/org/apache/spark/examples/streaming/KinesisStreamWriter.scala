@@ -25,9 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.util.Random
 import scala.collection.JavaConversions._
 
-import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.regions.RegionUtils
-import com.amazonaws.services.kinesis.AmazonKinesisClient
 import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures}
 import org.apache.commons.io.FileUtils
@@ -76,10 +74,6 @@ object KinesisStreamWriter {
         }
 
         override def run(): Unit = {
-          // Create the low-level Kinesis Client from the AWS Java SDK
-          val kinesisClient = new AmazonKinesisClient(new DefaultAWSCredentialsProviderChain())
-          kinesisClient.setEndpoint(endpoint)
-
           val recordIterator = new Iterator[String] {
             val rnd = new Random(i)
 

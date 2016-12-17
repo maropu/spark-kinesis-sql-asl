@@ -54,7 +54,6 @@
     <protobuf.version>2.6.0</protobuf.version>
     <aws.sdk.version>1.11.46</aws.sdk.version>
     <aws.kinesis.client.version>1.7.0</aws.kinesis.client.version>
-    <!-- the producer is used in tests -->
     <aws.kinesis.producer.version>0.12.1</aws.kinesis.producer.version>
     <PermGen>64m</PermGen>
     <MaxPermGen>512m</MaxPermGen>
