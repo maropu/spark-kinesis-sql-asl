@@ -109,9 +109,9 @@ The following configurations are optional:
     offsets are out of range). This may be a false alarm. You can disable it when it doesn't work
     as you expected.
 
-### Output Operation for Amazon Kinesis
+### Output Operation for Spark Streaming
 
-Since an output operation for Amazon Kinesis is not officially supported in the latest Spark release,
+Since a Kinesis output operation for Spark Streaming is not officially supported in the latest Spark release,
 this provides the operation like this;
 
     // Import a class that includes an output function
@@ -125,7 +125,7 @@ this provides the operation like this;
     scala> val endpointUrl = "kinesis.ap-northeast-1.amazonaws.com"
     scala> kinesisStream.count().saveAsKinesisStream(streamName, endpointUrl)
 
-    // Start processing streams
+    // Start processing the stream
     scala> ssc.start()
     scala> ssc.awaitTermination()
 

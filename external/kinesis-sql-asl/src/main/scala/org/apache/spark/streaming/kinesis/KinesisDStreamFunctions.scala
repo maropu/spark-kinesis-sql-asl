@@ -26,8 +26,8 @@ import com.amazonaws.regions.RegionUtils
 import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures}
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.dstream.{DStream, ForEachDStream}
 
