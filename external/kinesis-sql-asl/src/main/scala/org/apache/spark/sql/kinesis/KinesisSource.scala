@@ -387,7 +387,7 @@ private[kinesis] class KinesisSource(
         shard.shardId,
         from,
         // This unexpected behaviour is handled in a next range check
-        untilShardSeqNumbers.asJava.getOrDefault(shard, minimumSeqNumber))
+        untilShardSeqNumbers.getOrElse(shard, minimumSeqNumber))
     }.filter { range =>
       if (range.toSeqNumber < range.fromSeqNumber) {
         reportDataLoss(s"Shard ${range.shardId}'s offset in ${range.streamName} was changed " +
