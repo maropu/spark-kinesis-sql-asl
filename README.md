@@ -1,6 +1,6 @@
 [![Build Status](https://travis-ci.org/maropu/spark-kinesis-sql-asl.svg?branch=master)](https://travis-ci.org/maropu/spark-kinesis-sql-asl)
 
-Structured Streaming integration for Amazon Kinesis
+Structured Streaming integration and some utility functions for Amazon Kinesis
 
 ### How to use
 
@@ -108,6 +108,26 @@ The following configurations are optional:
     Whether to fail the query when it's possible that data is lost (e.g., topics are deleted, or
     offsets are out of range). This may be a false alarm. You can disable it when it doesn't work
     as you expected.
+
+### Output Operation for Amazon Kinesis
+
+Since an output operation for Amazon Kinesis is not officially supported in the latest Spark release,
+this provides the operation like this;
+
+    // Import a class that includes an output function
+    scala> import org.apache.spark.streaming.kinesis.KinesisDStreamFunctions._
+
+    // Create a DStream
+    scala> val stream: DStream[String] = ...
+
+    // Define the output operation
+    scala> val streamName = "OutputStream"
+    scala> val endpointUrl = "kinesis.ap-northeast-1.amazonaws.com"
+    scala> kinesisStream.count().saveAsKinesisStream(streamName, endpointUrl)
+
+    // Start processing streams
+    scala> ssc.start()
+    scala> ssc.awaitTermination()
 
 ### Points to Remember
 
