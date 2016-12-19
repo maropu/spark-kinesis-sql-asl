@@ -120,10 +120,13 @@ this provides the operation like this;
     // Create a DStream
     scala> val stream: DStream[String] = ...
 
+    // Define a handler to convert the DStream type for output
+    scala> val msgHandler = (s: String) => s.getBytes("UTF-8")
+
     // Define the output operation
     scala> val streamName = "OutputStream"
     scala> val endpointUrl = "kinesis.ap-northeast-1.amazonaws.com"
-    scala> kinesisStream.count().saveAsKinesisStream(streamName, endpointUrl)
+    scala> kinesisStream.count().saveAsKinesisStream(streamName, endpointUrl, msgHandler)
 
     // Start processing the stream
     scala> ssc.start()
