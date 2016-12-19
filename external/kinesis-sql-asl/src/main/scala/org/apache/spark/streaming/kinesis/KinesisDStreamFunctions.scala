@@ -28,13 +28,12 @@ import com.google.common.util.concurrent.{FutureCallback, Futures}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.execution.datasources.CaseInsensitiveMap
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.dstream.{DStream, ForEachDStream}
 
 
 /** An option set for the Kinesis Producer Library. */
-private[kinesis] class KinesisOptions(parameters: Map[String, String])
+private[kinesis] case class KinesisOptions(parameters: Map[String, String])
     extends Logging with Serializable {
 
   private def getInt(paramName: String, default: Int): Int = {
@@ -51,7 +50,7 @@ private[kinesis] class KinesisOptions(parameters: Map[String, String])
     }
   }
 
-  val endpoint = parameters.getOrElse("endpoint",
+  lazy val endpoint = parameters.getOrElse("endpoint",
     throw new IllegalArgumentException("`endpoint` not defined"))
 
   val aggregationMaxCount = getInt("aggregationMaxCount", Int.MaxValue)
@@ -64,7 +63,14 @@ private[kinesis] class KinesisOptions(parameters: Map[String, String])
   val metricsLevel = parameters.getOrElse("metricsLevel", "detailed")
 }
 
-private[kinesis] object KinesisProducerFactory extends Logging {
+private[kinesis] object KinesisProducerHolder extends Logging {
+
+  // Cache a Kinesis producer for each thread
+  private[this] val producerContext = {
+    val producer = new ThreadLocal[(KinesisProducer, KinesisOptions)]
+    producer.set((null, new KinesisOptions(Map.empty)))
+    producer
+  }
 
   private def resolveAWSCredentialsProvider(
       awsCredentialsOption: Option[SerializableAWSCredentials])
@@ -80,8 +86,9 @@ private[kinesis] object KinesisProducerFactory extends Logging {
       new DefaultAWSCredentialsProviderChain()
   }
 
-  // TODO: Do we need to cache `KinesisProducer`?
-  def get(awsCredentialsOption: Option[SerializableAWSCredentials], options: KinesisOptions)
+  private def createProducer(
+      awsCredentialsOption: Option[SerializableAWSCredentials],
+      options: KinesisOptions)
     : KinesisProducer = {
     val conf = new KinesisProducerConfiguration()
       .setCredentialsProvider(resolveAWSCredentialsProvider(awsCredentialsOption))
@@ -95,6 +102,16 @@ private[kinesis] object KinesisProducerFactory extends Logging {
       .setMaxConnections(options.maxConnections)
       .setMetricsLevel(options.metricsLevel)
     new KinesisProducer(conf)
+  }
+
+  def get(awsCredentialsOption: Option[SerializableAWSCredentials], options: KinesisOptions)
+    : KinesisProducer = {
+    // Update a Kinesis producer if the new `options` and previous ones are different
+    // between each other.
+    if (options != producerContext.get._2) {
+      producerContext.set((createProducer(awsCredentialsOption, options), options))
+    }
+    producerContext.get._1
   }
 }
 
@@ -119,7 +136,7 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     val kinesisOptions = new KinesisOptions(otherOptions + ("endpoint" -> endpoint))
     val saveFunc = (rdd: RDD[T], time: Time) => {
       rdd.foreachPartition { iter =>
-        val producer = KinesisProducerFactory.get(serializableAWSCredentials, kinesisOptions)
+        val producer = KinesisProducerHolder.get(serializableAWSCredentials, kinesisOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
           val blob = ByteBuffer.wrap(msgHandler(data))
           val future = producer.addUserRecord(stream, partitioner(data, index), blob)
