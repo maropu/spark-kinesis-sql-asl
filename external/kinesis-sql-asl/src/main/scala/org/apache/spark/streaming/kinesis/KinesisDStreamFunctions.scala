@@ -28,10 +28,45 @@ import com.google.common.util.concurrent.{FutureCallback, Futures}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.execution.datasources.CaseInsensitiveMap
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.dstream.{DStream, ForEachDStream}
 
-object KinesisProducerHolder extends Logging {
+
+/** An option set for the Kinesis Producer Library. */
+private[kinesis] class KinesisOptions(@transient private val parameters: CaseInsensitiveMap)
+  extends Logging with Serializable {
+
+  def this(parameters: Map[String, String]) = this(new CaseInsensitiveMap(parameters))
+
+  private def getInt(paramName: String, default: Int): Int = {
+    val paramValue = parameters.get(paramName)
+    paramValue match {
+      case None => default
+      case Some(null) => default
+      case Some(value) => try {
+        value.toInt
+      } catch {
+        case e: NumberFormatException =>
+          throw new RuntimeException(s"$paramName should be an integer. Found $value")
+      }
+    }
+  }
+
+  val endpoint = parameters.getOrElse("endpoint",
+    throw new IllegalArgumentException("`endpoint` not defined"))
+
+  val aggregationMaxCount = getInt("aggregationMaxCount", Int.MaxValue)
+  val aggregationMaxSize = getInt("aggregationMaxSize", 51200)
+  val collectionMaxCount = getInt("collectionMaxCount", 500)
+  val collectionMaxSize = getInt("collectionMaxSize", 5242880)
+  val rateLimit = getInt("rateLimit", 150)
+  val recordMaxBufferedTime = getInt("recordMaxBufferedTime", 100)
+  val maxConnections = getInt("maxConnections", 24)
+  val metricsLevel = parameters.getOrElse("metricsLevel", "detailed")
+}
+
+private[kinesis] object KinesisProducerHolder extends Logging {
 
   private var producer: Option[KinesisProducer] = None
 
@@ -50,31 +85,38 @@ object KinesisProducerHolder extends Logging {
   }
 
   private def createProducer(
-    endpoint: String,
     awsCredentialsOption: Option[SerializableAWSCredentials],
-    otherOptions: Map[String, String])
+    options: KinesisOptions)
     : KinesisProducer = {
     val conf = new KinesisProducerConfiguration()
-      .setRecordMaxBufferedTime(otherOptions.getOrElse("recordMaxBufferedTime", "1000").toInt)
-      .setMaxConnections(otherOptions.getOrElse("maxConnections", "1").toInt)
-      .setRegion(RegionUtils.getRegionMetadata.getRegionByEndpoint(endpoint).getName)
-      .setMetricsLevel("summary")
       .setCredentialsProvider(resolveAWSCredentialsProvider(awsCredentialsOption))
+      .setRegion(RegionUtils.getRegionMetadata.getRegionByEndpoint(options.endpoint).getName)
+      .setAggregationMaxCount(options.aggregationMaxCount)
+      .setAggregationMaxSize(options.aggregationMaxSize)
+      .setCollectionMaxCount(options.collectionMaxCount)
+      .setCollectionMaxSize(options.collectionMaxSize)
+      .setRateLimit(options.rateLimit)
+      .setRecordMaxBufferedTime(options.recordMaxBufferedTime)
+      .setMaxConnections(options.maxConnections)
+      .setMetricsLevel(options.metricsLevel)
     new KinesisProducer(conf)
   }
 
   def get(
     endpoint: String,
     awsCredentialsOption: Option[SerializableAWSCredentials],
-    options: Map[String, String])
+    options: KinesisOptions)
     : KinesisProducer = {
     producer.getOrElse {
-      producer = Some(createProducer(endpoint, awsCredentialsOption, options))
+      producer = Some(createProducer(awsCredentialsOption, options))
       producer.get
     }
   }
 }
 
+/**
+ * Extra functions available on DStream for Amazon Kinesis through an implicit conversion.
+ */
 final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     extends Serializable with Logging {
 
@@ -88,11 +130,13 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
       msgHandler: T => Array[Byte],
       partitioner: (T, Int) => String,
       serializableAWSCredentials: Option[SerializableAWSCredentials],
-      otherOptions: Map[String, String] = Map.empty)
+      otherOptions: Map[String, String])
     : Unit = self.ssc.withScope {
+    val kinesisOptions = new KinesisOptions(otherOptions + ("endpoint" -> endpoint))
     val saveFunc = (rdd: RDD[T], time: Time) => {
       rdd.foreachPartition { iter =>
-        val producer = KinesisProducerHolder.get(endpoint, serializableAWSCredentials, otherOptions)
+        val producer = KinesisProducerHolder.get(
+          endpoint, serializableAWSCredentials, kinesisOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
           val blob = ByteBuffer.wrap(msgHandler(data))
           val future = producer.addUserRecord(stream, partitioner(data, index), blob)
@@ -111,18 +155,16 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
   def saveAsKinesisStream(
       stream: String,
       endpoint: String,
-      msgHandler: T => Array[Byte],
-      otherOptions: Map[String, String] = Map.empty): Unit = {
-    saveAsKinesisStream(stream, endpoint, msgHandler, defaultPartitioner _, None, otherOptions)
+      msgHandler: T => Array[Byte]): Unit = {
+    saveAsKinesisStream(stream, endpoint, msgHandler, Map.empty)
   }
 
   def saveAsKinesisStream(
       stream: String,
       endpoint: String,
       msgHandler: T => Array[Byte],
-      partitioner: (T, Int) => String,
-      otherOptions: Map[String, String] = Map.empty): Unit = {
-    saveAsKinesisStream(stream, endpoint, msgHandler, partitioner, None, otherOptions)
+      otherOptions: Map[String, String]): Unit = {
+    saveAsKinesisStream(stream, endpoint, msgHandler, defaultPartitioner _, None, otherOptions)
   }
 
   def saveAsKinesisStream(
@@ -131,7 +173,7 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
       msgHandler: T => Array[Byte],
       awsAccessKeyId: String,
       awsSecretKey: String,
-      otherOptions: Map[String, String] = Map.empty): Unit = {
+      otherOptions: Map[String, String]): Unit = {
     saveAsKinesisStream(
       stream,
       endpoint,
@@ -145,10 +187,10 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
       stream: String,
       endpoint: String,
       msgHandler: T => Array[Byte],
-      partitioner: (T, Int) => String,
       awsAccessKeyId: String,
       awsSecretKey: String,
-      otherOptions: Map[String, String] = Map.empty): Unit = {
+      partitioner: (T, Int) => String,
+      otherOptions: Map[String, String]): Unit = {
     saveAsKinesisStream(
       stream,
       endpoint,
