@@ -38,24 +38,6 @@ install_spark() {
     "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" \
     "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}/bin/spark-shell"
 
-  # Check and resolve a protobuf version issue;
-  # aws-kinesis-client-1.7+ requires protobuf-java-2.6+ though, spark-2.0.x depends on protobuf-java-2.5.
-  local PROTOBUF_VERSION=`grep "<protobuf.version>" "${_DIR}/../pom.xml" | head -n1 | awk -F '[<>]' '{print $3}'`
-  local PROTOBUF_DETECTED_BIN=`ls ${SPARK_DIR}/jars | grep -E 'protobuf-java-[0-9\.]*\.jar'`
-  local PROTOBUF_DETECTED_VERSION=`echo ${PROTOBUF_DETECTED_BIN} | awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) {print substr($0, RSTART, RLENGTH)}'`
-  # See simple version normalization: http://stackoverflow.com/questions/16989598/bash-comparing-version-numbers
-  function version { echo "$@" | awk -F. '{ printf("%03d%03d%03d\n", $1,$2,$3); }'; }
-  if [ $(version $PROTOBUF_DETECTED_VERSION) -lt $(version $PROTOBUF_VERSION) ]; then
-    local MAVEN_CENTRAL_URL="http://central.maven.org/maven2"
-    local PROTOBUF_BIN="protobuf-java-${PROTOBUF_VERSION}.jar"
-    local PROTOBUF_URL="${MAVEN_CENTRAL_URL}/com/google/protobuf/protobuf-java/${PROTOBUF_VERSION}/${PROTOBUF_BIN}"
-
-    echo "Replacing ${PROTOBUF_DETECTED_BIN} with ${PROTOBUF_BIN} to resolve a kinesis client protobuf dependency" 1>&2
-
-    download_app "${PROTOBUF_URL}" "${PROTOBUF_BIN}"
-    rm "${SPARK_DIR}/jars/${PROTOBUF_DETECTED_BIN}" && mv "${PROTOBUF_BIN}" "${SPARK_DIR}/jars/"
-  fi
-
   SPARK_BIN="${SPARK_DIR}/bin/spark-shell"
 }
 
