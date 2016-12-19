@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets
 
 import scala.reflect.ClassTag
 
+import com.amazonaws.auth.{AWSCredentials, AWSCredentialsProvider, DefaultAWSCredentialsProviderChain}
 import com.amazonaws.regions.RegionUtils
 import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures}
@@ -31,22 +32,45 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.dstream.{DStream, ForEachDStream}
 
-object KinesisProducerHolder {
+object KinesisProducerHolder extends Logging {
 
   private var producer: Option[KinesisProducer] = None
 
-  private def createProducer(endpoint: String, options: Map[String, String]): KinesisProducer = {
+  private def resolveAWSCredentialsProvider(
+    awsCredentialsOption: Option[SerializableAWSCredentials])
+    : AWSCredentialsProvider = awsCredentialsOption match {
+    case Some(awsCredentials) =>
+      logInfo("Using provided AWS credentials")
+      new AWSCredentialsProvider {
+        override def getCredentials: AWSCredentials = awsCredentials
+        override def refresh(): Unit = {}
+      }
+    case None =>
+      logInfo("Using DefaultAWSCredentialsProviderChain")
+      new DefaultAWSCredentialsProviderChain()
+  }
+
+  private def createProducer(
+    endpoint: String,
+    awsCredentialsOption: Option[SerializableAWSCredentials],
+    otherOptions: Map[String, String])
+    : KinesisProducer = {
     val conf = new KinesisProducerConfiguration()
-      .setRecordMaxBufferedTime(options.getOrElse("recordMaxBufferedTime", "1000").toInt)
-      .setMaxConnections(options.getOrElse("maxConnections", "1").toInt)
+      .setRecordMaxBufferedTime(otherOptions.getOrElse("recordMaxBufferedTime", "1000").toInt)
+      .setMaxConnections(otherOptions.getOrElse("maxConnections", "1").toInt)
       .setRegion(RegionUtils.getRegionMetadata.getRegionByEndpoint(endpoint).getName)
       .setMetricsLevel("summary")
+      .setCredentialsProvider(resolveAWSCredentialsProvider(awsCredentialsOption))
     new KinesisProducer(conf)
   }
 
-  def get(endpoint: String, options: Map[String, String]): KinesisProducer = {
+  def get(
+    endpoint: String,
+    awsCredentialsOption: Option[SerializableAWSCredentials],
+    options: Map[String, String])
+    : KinesisProducer = {
     producer.getOrElse {
-      producer = Some(createProducer(endpoint, options))
+      producer = Some(createProducer(endpoint, awsCredentialsOption, options))
       producer.get
     }
   }
@@ -55,12 +79,15 @@ object KinesisProducerHolder {
 final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     extends Serializable with Logging {
 
-  def saveAsKinesisStream(
-      stream: String, endpoint: String, options: Map[String, String] = Map.empty)
+  private def saveAsKinesisStream(
+      stream: String,
+      endpoint: String,
+      serializableAWSCredentials: Option[SerializableAWSCredentials],
+      otherOptions: Map[String, String] = Map.empty)
     : Unit = self.ssc.withScope {
     val saveFunc = (rdd: RDD[T], time: Time) => {
       rdd.foreachPartition { iter =>
-        val producer = KinesisProducerHolder.get(endpoint, options)
+        val producer = KinesisProducerHolder.get(endpoint, serializableAWSCredentials, otherOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
           val blob = ByteBuffer.wrap(s"$data".getBytes(StandardCharsets.UTF_8))
           val partitionKey = s"partitionKey-$index"
@@ -75,6 +102,26 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
       }
     }
     new ForEachDStream(self, self.context.sparkContext.clean(saveFunc, false), false).register()
+  }
+
+  def saveAsKinesisStream(
+      stream: String,
+      endpoint: String,
+      otherOptions: Map[String, String] = Map.empty): Unit = {
+    this.saveAsKinesisStream(stream, endpoint, None, otherOptions)
+  }
+
+  def saveAsKinesisStream(
+      stream: String,
+      endpoint: String,
+      awsAccessKeyId: String,
+      awsSecretKey: String,
+      otherOptions: Map[String, String] = Map.empty): Unit = {
+    this.saveAsKinesisStream(
+      stream,
+      endpoint,
+      Some(SerializableAWSCredentials(awsAccessKeyId, awsSecretKey)),
+      otherOptions)
   }
 }
 
