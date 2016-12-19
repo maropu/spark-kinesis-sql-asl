@@ -34,10 +34,8 @@ import org.apache.spark.streaming.dstream.{DStream, ForEachDStream}
 
 
 /** An option set for the Kinesis Producer Library. */
-private[kinesis] class KinesisOptions(@transient private val parameters: CaseInsensitiveMap)
-  extends Logging with Serializable {
-
-  def this(parameters: Map[String, String]) = this(new CaseInsensitiveMap(parameters))
+private[kinesis] class KinesisOptions(parameters: Map[String, String])
+    extends Logging with Serializable {
 
   private def getInt(paramName: String, default: Int): Int = {
     val paramValue = parameters.get(paramName)
