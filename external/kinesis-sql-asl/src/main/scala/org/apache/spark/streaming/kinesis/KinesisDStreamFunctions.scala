@@ -18,7 +18,6 @@
 package org.apache.spark.streaming.kinesis
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 import scala.reflect.ClassTag
 
@@ -79,9 +78,15 @@ object KinesisProducerHolder extends Logging {
 final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     extends Serializable with Logging {
 
+  private def defaultPartitioner(data: T, index: Int): String = {
+    s"partitionKey-${index}"
+  }
+
   private def saveAsKinesisStream(
       stream: String,
       endpoint: String,
+      msgHandler: T => Array[Byte],
+      partitioner: (T, Int) => String,
       serializableAWSCredentials: Option[SerializableAWSCredentials],
       otherOptions: Map[String, String] = Map.empty)
     : Unit = self.ssc.withScope {
@@ -89,9 +94,8 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
       rdd.foreachPartition { iter =>
         val producer = KinesisProducerHolder.get(endpoint, serializableAWSCredentials, otherOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
-          val blob = ByteBuffer.wrap(s"$data".getBytes(StandardCharsets.UTF_8))
-          val partitionKey = s"partitionKey-$index"
-          val future = producer.addUserRecord(stream, partitionKey, blob)
+          val blob = ByteBuffer.wrap(msgHandler(data))
+          val future = producer.addUserRecord(stream, partitioner(data, index), blob)
           val kinesisCallBack = new FutureCallback[UserRecordResult]() {
             override def onSuccess(result: UserRecordResult): Unit = {}
             override def onFailure(t: Throwable): Unit = {}
@@ -107,19 +111,49 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
   def saveAsKinesisStream(
       stream: String,
       endpoint: String,
+      msgHandler: T => Array[Byte],
       otherOptions: Map[String, String] = Map.empty): Unit = {
-    this.saveAsKinesisStream(stream, endpoint, None, otherOptions)
+    saveAsKinesisStream(stream, endpoint, msgHandler, defaultPartitioner _, None, otherOptions)
   }
 
   def saveAsKinesisStream(
       stream: String,
       endpoint: String,
+      msgHandler: T => Array[Byte],
+      partitioner: (T, Int) => String,
+      otherOptions: Map[String, String] = Map.empty): Unit = {
+    saveAsKinesisStream(stream, endpoint, msgHandler, partitioner, None, otherOptions)
+  }
+
+  def saveAsKinesisStream(
+      stream: String,
+      endpoint: String,
+      msgHandler: T => Array[Byte],
       awsAccessKeyId: String,
       awsSecretKey: String,
       otherOptions: Map[String, String] = Map.empty): Unit = {
-    this.saveAsKinesisStream(
+    saveAsKinesisStream(
       stream,
       endpoint,
+      msgHandler,
+      defaultPartitioner _,
+      Some(SerializableAWSCredentials(awsAccessKeyId, awsSecretKey)),
+      otherOptions)
+  }
+
+  def saveAsKinesisStream(
+      stream: String,
+      endpoint: String,
+      msgHandler: T => Array[Byte],
+      partitioner: (T, Int) => String,
+      awsAccessKeyId: String,
+      awsSecretKey: String,
+      otherOptions: Map[String, String] = Map.empty): Unit = {
+    saveAsKinesisStream(
+      stream,
+      endpoint,
+      msgHandler,
+      partitioner,
       Some(SerializableAWSCredentials(awsAccessKeyId, awsSecretKey)),
       otherOptions)
   }
