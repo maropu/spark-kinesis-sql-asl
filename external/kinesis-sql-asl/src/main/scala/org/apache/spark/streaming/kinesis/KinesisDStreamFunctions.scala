@@ -66,10 +66,8 @@ private[kinesis] class KinesisOptions(parameters: Map[String, String])
 
 private[kinesis] object KinesisProducerHolder extends Logging {
 
-  private var producer: Option[KinesisProducer] = None
-
   private def resolveAWSCredentialsProvider(
-    awsCredentialsOption: Option[SerializableAWSCredentials])
+      awsCredentialsOption: Option[SerializableAWSCredentials])
     : AWSCredentialsProvider = awsCredentialsOption match {
     case Some(awsCredentials) =>
       logInfo("Using provided AWS credentials")
@@ -82,9 +80,8 @@ private[kinesis] object KinesisProducerHolder extends Logging {
       new DefaultAWSCredentialsProviderChain()
   }
 
-  private def createProducer(
-    awsCredentialsOption: Option[SerializableAWSCredentials],
-    options: KinesisOptions)
+  // TODO: Do we need to cache `KinesisProducer`?
+  def get(awsCredentialsOption: Option[SerializableAWSCredentials], options: KinesisOptions)
     : KinesisProducer = {
     val conf = new KinesisProducerConfiguration()
       .setCredentialsProvider(resolveAWSCredentialsProvider(awsCredentialsOption))
@@ -98,17 +95,6 @@ private[kinesis] object KinesisProducerHolder extends Logging {
       .setMaxConnections(options.maxConnections)
       .setMetricsLevel(options.metricsLevel)
     new KinesisProducer(conf)
-  }
-
-  def get(
-    endpoint: String,
-    awsCredentialsOption: Option[SerializableAWSCredentials],
-    options: KinesisOptions)
-    : KinesisProducer = {
-    producer.getOrElse {
-      producer = Some(createProducer(awsCredentialsOption, options))
-      producer.get
-    }
   }
 }
 
@@ -133,8 +119,7 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     val kinesisOptions = new KinesisOptions(otherOptions + ("endpoint" -> endpoint))
     val saveFunc = (rdd: RDD[T], time: Time) => {
       rdd.foreachPartition { iter =>
-        val producer = KinesisProducerHolder.get(
-          endpoint, serializableAWSCredentials, kinesisOptions)
+        val producer = KinesisProducerHolder.get(serializableAWSCredentials, kinesisOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
           val blob = ByteBuffer.wrap(msgHandler(data))
           val future = producer.addUserRecord(stream, partitioner(data, index), blob)
