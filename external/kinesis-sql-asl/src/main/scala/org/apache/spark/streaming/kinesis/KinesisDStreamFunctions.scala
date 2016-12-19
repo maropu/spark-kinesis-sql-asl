@@ -64,7 +64,7 @@ private[kinesis] class KinesisOptions(parameters: Map[String, String])
   val metricsLevel = parameters.getOrElse("metricsLevel", "detailed")
 }
 
-private[kinesis] object KinesisProducerHolder extends Logging {
+private[kinesis] object KinesisProducerFactory extends Logging {
 
   private def resolveAWSCredentialsProvider(
       awsCredentialsOption: Option[SerializableAWSCredentials])
@@ -119,13 +119,15 @@ final class KinesisDStreamFunctions[T: ClassTag](@transient self: DStream[T])
     val kinesisOptions = new KinesisOptions(otherOptions + ("endpoint" -> endpoint))
     val saveFunc = (rdd: RDD[T], time: Time) => {
       rdd.foreachPartition { iter =>
-        val producer = KinesisProducerHolder.get(serializableAWSCredentials, kinesisOptions)
+        val producer = KinesisProducerFactory.get(serializableAWSCredentials, kinesisOptions)
         iter.zipWithIndex.foreach { case (data, index) =>
           val blob = ByteBuffer.wrap(msgHandler(data))
           val future = producer.addUserRecord(stream, partitioner(data, index), blob)
           val kinesisCallBack = new FutureCallback[UserRecordResult]() {
             override def onSuccess(result: UserRecordResult): Unit = {}
-            override def onFailure(t: Throwable): Unit = {}
+            override def onFailure(t: Throwable): Unit = {
+              logError("Failed to send data:" + data)
+            }
           }
           Futures.addCallback(future, kinesisCallBack)
         }
