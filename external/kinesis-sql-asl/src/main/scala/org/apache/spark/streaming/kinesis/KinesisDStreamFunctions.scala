@@ -66,11 +66,8 @@ private[kinesis] case class KinesisOptions(parameters: Map[String, String])
 private[kinesis] object KinesisProducerHolder extends Logging {
 
   // Cache a Kinesis producer for each thread
-  private[this] val producerContext = {
-    val producer = new ThreadLocal[(KinesisProducer, KinesisOptions)]
-    producer.set((null, new KinesisOptions(Map.empty)))
-    producer
-  }
+  case class ProducerContext(producer: KinesisProducer, options: KinesisOptions)
+  private[this] val producerHolder = new ThreadLocal[ProducerContext]
 
   private def resolveAWSCredentialsProvider(
       awsCredentialsOption: Option[SerializableAWSCredentials])
@@ -108,10 +105,10 @@ private[kinesis] object KinesisProducerHolder extends Logging {
     : KinesisProducer = {
     // Update a Kinesis producer if the new `options` and previous ones are different
     // between each other.
-    if (options != producerContext.get._2) {
-      producerContext.set((createProducer(awsCredentialsOption, options), options))
+    if (producerHolder.get() == null || options != producerHolder.get.options) {
+      producerHolder.set(ProducerContext(createProducer(awsCredentialsOption, options), options))
     }
-    producerContext.get._1
+    producerHolder.get.producer
   }
 }
 
