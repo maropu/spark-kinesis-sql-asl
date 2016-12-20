@@ -1,10 +1,10 @@
 [![Build Status](https://travis-ci.org/maropu/spark-kinesis-sql-asl.svg?branch=master)](https://travis-ci.org/maropu/spark-kinesis-sql-asl)
 
-Structured Streaming integration and some utility functions for Amazon Kinesis
+Structured Streaming integration for Kinesis and some utility stuffs for AWS
 
 ### How to use
 
-For the Kinesis integration, you need to launch spark-shell with this compiled jar.
+For the Kinesis integration, you need to launch a spark-shell with this compiled jar.
 
     $ git clone https://github.com/maropu/spark-kinesis-sql-asl.git
     $ cd spark-kinesis-sql-asl
@@ -131,6 +131,19 @@ this provides the operation like this;
     // Start processing the stream
     scala> ssc.start()
     scala> ssc.awaitTermination()
+
+## Read/Write data to S3
+
+If you launch a spark-shell with this compiled jar, you can read data from S3 as follows;
+
+     // Settings for S3
+    scala> val hadoopConf = sc.hadoopConfiguration
+    scala> hadoopConf.set("fs.s3n.awsAccessKeyId", "XXX")
+    scala> hadoopConf.set("fs.s3n.awsSecretAccessKey", "YYY")
+    scala> sc.hadoopConfiguration.set("fs.s3n.impl", "org.apache.hadoop.fs.s3native.NativeS3FileSystem")
+
+    // Read CSV-fomatted data from S3
+    scala> val df = spark.read.format("csv").option("path", "s3n://<bucketname>/<filename>.csv").load
 
 ### Points to Remember
 
