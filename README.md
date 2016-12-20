@@ -132,11 +132,11 @@ this provides the operation like this;
     scala> ssc.start()
     scala> ssc.awaitTermination()
 
-## Read/Write data to S3
+## Read data from S3
 
 If you launch a spark-shell with this compiled jar, you can read data from S3 as follows;
 
-     // Settings for S3
+    // Settings for S3
     scala> val hadoopConf = sc.hadoopConfiguration
     scala> hadoopConf.set("fs.s3n.awsAccessKeyId", "XXX")
     scala> hadoopConf.set("fs.s3n.awsSecretAccessKey", "YYY")
