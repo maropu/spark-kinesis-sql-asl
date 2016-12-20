@@ -63,6 +63,16 @@
       <version>${aws.kinesis.producer.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-aws</artifactId>
+      <version>${hadoop.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.amazonaws</groupId>
+      <artifactId>aws-java-sdk-s3</artifactId>
+      <version>${aws.sdk.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-streaming-kinesis-asl_${scala.binary.version}</artifactId>
       <version>${project.version}</version>
@@ -221,6 +231,8 @@
                   <include>com.amazonaws:aws-java-sdk-dynamodb</include>
                   <include>com.amazonaws:amazon-kinesis-client</include>
                   <include>com.amazonaws:amazon-kinesis-producer</include>
+                  <include>org.apache.hadoop:hadoop-aws</include>
+                  <include>com.amazonaws:aws-java-sdk-s3</include>
                   <include>org.apache.spark:spark-streaming-kinesis-asl_${scala.binary.version}</include>
                   <include>com.fasterxml.jackson.core:jackson-core</include>
                   <include>com.fasterxml.jackson.core:jackson-databind</include>

@@ -50,7 +50,7 @@
     <scala.version>2.11.8</scala.version>
     <scala.binary.version>2.11</scala.binary.version>
     <spark.version>2.0.1</spark.version>
-    <hadoop.version>2.7</hadoop.version>
+    <hadoop.version>2.7.3</hadoop.version>
     <protobuf.version>2.6.0</protobuf.version>
     <aws.sdk.version>1.10.61</aws.sdk.version>
     <aws.kinesis.client.version>1.6.2</aws.kinesis.client.version>
