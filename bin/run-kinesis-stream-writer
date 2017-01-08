@@ -21,8 +21,6 @@
 _DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Preserve the calling directory
 _CALLING_DIR="$(pwd)"
-# Scala options used during launching jar
-_SCALA_OPTS="-J-Xms4g -J-Xmx4g"
 
 # Load some functions to instal some applications
 . ${_DIR}/../thirdparty/install.sh
