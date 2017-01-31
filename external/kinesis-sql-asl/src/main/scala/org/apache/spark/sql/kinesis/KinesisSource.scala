@@ -546,7 +546,8 @@ private[kinesis] object KinesisSource {
       awsCredentialsOption = Some(serializableAWSCredentials)
     )
     if (baseRdd.isEmpty()) {
-      throw new IllegalStateException("No stream data exists for inferring a schema")
+      throw new IllegalStateException(
+        "No stream data exists for inferring a schema, so you need to explicitly set it")
     }
     val valueSchema = dataFormat.inferSchema(sqlContext.sparkSession, baseRdd, sourceOptions)
     withTimestamp(valueSchema)
