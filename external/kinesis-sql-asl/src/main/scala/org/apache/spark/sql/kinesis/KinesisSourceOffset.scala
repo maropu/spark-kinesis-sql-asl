@@ -18,6 +18,7 @@
 package org.apache.spark.sql.kinesis
 
 import org.apache.spark.sql.execution.streaming.Offset
+import org.apache.spark.sql.execution.streaming.SerializedOffset
 
 /** A holder for shard ids in streams */
 private[spark] case class KinesisShard(streamName: String, shardId: String)
@@ -30,27 +31,17 @@ private[kinesis] case class KinesisSourceOffset(
     shardToSeqNum: Map[KinesisShard, String]) extends Offset {
   import KinesisSourceOffset._
 
-  override def toString(): String = {
-    shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering).mkString("[", ", ", "]")
-  }
+  override val json = JsonUtils.partitionOffsets(shardToSeqNum)
 }
 
 private[kinesis] object KinesisSourceOffset {
 
-  type KinesisOffset = (KinesisShard, String)
-
-  val kinesisOffsetOrdering = new Ordering[KinesisOffset] {
-
-    override def compare(x: KinesisOffset, y: KinesisOffset): Int = {
-      if (x._1.streamName != y._1.streamName) {
-        x._1.streamName.compare(y._1.streamName)
-      } else {
-        if (x._1.shardId != y._1.shardId) {
-          x._1.shardId.compare(y._1.shardId)
-        } else {
-          x._2.compare(y._2)
-        }
-      }
+  def getShardSeqNumbers(offset: Offset): Map[KinesisShard, String] = {
+    offset match {
+      case o: KinesisSourceOffset => o.shardToSeqNum
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Invalid conversion from offset of ${offset.getClass} to KinesisSourceOffset")
     }
   }
 
@@ -65,12 +56,9 @@ private[kinesis] object KinesisSourceOffset {
     )
   }
 
-  def getShardSeqNumbers(offset: Offset): Map[KinesisShard, String] = {
-    offset match {
-      case o: KinesisSourceOffset => o.shardToSeqNum
-      case _ =>
-        throw new IllegalArgumentException(
-          s"Invalid conversion from offset of ${offset.getClass} to KinesisSourceOffset")
-    }
-  }
+  /**
+   * Returns [[KinesisSourceOffset]] from a JSON [[SerializedOffset]]
+   */
+  def apply(offset: SerializedOffset): KinesisSourceOffset =
+    KinesisSourceOffset(JsonUtils.partitionOffsets(offset.json))
 }

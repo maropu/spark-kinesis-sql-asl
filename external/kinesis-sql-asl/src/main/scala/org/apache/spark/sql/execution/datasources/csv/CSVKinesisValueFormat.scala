@@ -90,7 +90,7 @@ private[spark] class CSVKinesisValueFormat extends KinesisValueFormat {
       options: Map[String, String]): StructType = {
     val csvOptions = new CSVOptions(options)
     val rowRdd = recordRdd.mapPartitionsInternal { part =>
-      val csvReader = new LineCsvReader(csvOptions)
+      val csvReader = new CsvReader(csvOptions)
       part.map { line =>
         csvReader.parseLine(new String(line, csvOptions.charset))
       }
@@ -116,7 +116,7 @@ private[spark] class CSVKinesisValueFormat extends KinesisValueFormat {
     val csvOptions = new CSVOptions(options)
 
     new (Iterator[Array[Byte]] => Iterator[InternalRow]) with Serializable with Logging {
-      lazy val lineReader = new LineCsvReader(csvOptions)
+      lazy val lineReader = new CsvReader(csvOptions)
       lazy val rowParser = CSVRelation.csvParser(schema, schema.fieldNames, csvOptions)
 
       override def apply(records: Iterator[Array[Byte]]): Iterator[InternalRow] = {

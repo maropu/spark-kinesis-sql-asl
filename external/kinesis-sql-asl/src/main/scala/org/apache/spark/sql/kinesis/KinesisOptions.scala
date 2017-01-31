@@ -24,7 +24,7 @@ import com.amazonaws.regions.RegionUtils
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.datasources.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 
 private[spark] class KinesisOptions(@transient private val parameters: Map[String, String])
     extends Logging with Serializable {

@@ -23,6 +23,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonParser}
 import org.apache.spark.sql.kinesis.KinesisValueFormat
 import org.apache.spark.sql.types.StructType
 
@@ -107,12 +108,10 @@ private[spark] class JsonKinesisValueFormat extends KinesisValueFormat {
 
     new (Iterator[Array[Byte]] => Iterator[InternalRow]) with Serializable {
 
+      lazy val parser = new JacksonParser(schema, columnNameOfCorruptRecord, parsedOptions)
+
       override def apply(records: Iterator[Array[Byte]]): Iterator[InternalRow] = {
-        JacksonParser.parseJson(
-          records.map(new String(_, StandardCharsets.UTF_8)),
-          schema,
-          columnNameOfCorruptRecord,
-          parsedOptions)
+        records.flatMap(bytes => parser.parse(new String(bytes, StandardCharsets.UTF_8)))
       }
     }
   }

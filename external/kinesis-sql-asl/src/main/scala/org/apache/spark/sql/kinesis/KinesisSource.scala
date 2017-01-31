@@ -303,7 +303,7 @@ private[kinesis] class KinesisSource(
     initialShardSeqNumbers
 
     synchronizeStreamBlocks {
-      val offset = kinesisOptions.softLimitMaxRecordsPerTrigger match {
+      kinesisOptions.softLimitMaxRecordsPerTrigger match {
         case limit if limit > 0 =>
           // Control processing number of records per trigger to prevent Spark from
           // invoking many tasks in a job.
@@ -311,8 +311,6 @@ private[kinesis] class KinesisSource(
         case _ =>
           KinesisSourceOffset(shardIdToLatestStoredSeqNumber.clone().toMap)
       }
-      logDebug(s"getOffset: ${offset.shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering)}")
-      offset
     }
   }
 
