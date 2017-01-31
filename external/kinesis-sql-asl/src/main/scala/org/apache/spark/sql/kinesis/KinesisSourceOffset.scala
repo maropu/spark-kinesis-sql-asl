@@ -28,12 +28,7 @@ private[spark] case class KinesisShard(streamName: String, shardId: String)
  */
 private[kinesis] case class KinesisSourceOffset(
     shardToSeqNum: Map[KinesisShard, String]) extends Offset {
-
   import KinesisSourceOffset._
-
-  override def compareTo(other: Offset): Int = {
-    toString().compareTo(other.toString)
-  }
 
   override def toString(): String = {
     shardToSeqNum.toSeq.sorted(kinesisOffsetOrdering).mkString("[", ", ", "]")
