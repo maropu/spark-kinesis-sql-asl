@@ -26,7 +26,7 @@
   </parent>
   <groupId>org.apache.spark</groupId>
   <artifactId>spark-kinesis-asl_2.11</artifactId>
-  <version>2.0.1-SNAPSHOT</version>
+  <version>2.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Spark Kinesis Integration for Structured Streaming</name>
 
@@ -36,8 +36,8 @@
       because of the license issue. So, we need to embed these kinesis modules here
       for each Spark version.
     -->
-    <module>spark/spark-2.0/kinesis-asl</module>
-    <module>spark/spark-2.0/tests</module>
+    <module>spark/spark-2.1/kinesis-asl</module>
+    <module>spark/spark-2.1/tests</module>
     <module>external/kinesis-sql-asl</module>
     <module>external/kinesis-stream-writer</module>
   </modules>
@@ -51,6 +51,7 @@
     <scala.binary.version>2.11</scala.binary.version>
     <spark.version>2.1.0</spark.version>
     <hadoop.version>2.7.3</hadoop.version>
+    <hadoop.binary.version>2.7</hadoop.binary.version>
     <protobuf.version>2.6.0</protobuf.version>
     <aws.sdk.version>1.10.61</aws.sdk.version>
     <aws.kinesis.client.version>1.6.2</aws.kinesis.client.version>
