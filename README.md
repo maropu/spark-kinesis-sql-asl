@@ -1,6 +1,9 @@
 [![Build Status](https://travis-ci.org/maropu/spark-kinesis-sql-asl.svg?branch=master)](https://travis-ci.org/maropu/spark-kinesis-sql-asl)
 
-Structured Streaming integration for Kinesis and some utility stuffs for AWS
+Structured Streaming integration for Kinesis and some utility stuffs for AWS.
+This is just a prototype to check feasibility for the kinesis integration.
+[SPARK-18165](https://issues.apache.org/jira/browse/SPARK-18165) describes the integration and
+we will discuss whether the Spark repository includes this or not after the Streaming Streaming APIs become stable.
 
 ### How to use
 
@@ -8,14 +11,14 @@ For the Kinesis integration, you need to launch a spark-shell with this compiled
 
     $ git clone https://github.com/maropu/spark-kinesis-sql-asl.git
     $ cd spark-kinesis-sql-asl
-    $ ./bin/spark-shell --jars assembly/spark-sql-kinesis-asl_2.11-2.0.1.jar
+    $ ./bin/spark-shell --jars assembly/spark-sql-kinesis-asl_2.11-2.1.jar
 
 ### Prepare a test stream
 
     $ aws kinesis create-stream --stream-name LogStream --shard-count 2
-    $ aws kinesis put-record --stream-name LogStream --partition-key 1 --data 1,abc,0.3
-    $ aws kinesis put-record --stream-name LogStream --partition-key 2 --data 2,defghi,1.1
-    $ aws kinesis put-record --stream-name LogStream --partition-key 3 --data 3,jk,0.1
+    $ aws kinesis put-record --stream-name LogStream --partition-key 1 --data '{"name":"Taro","age":33,"weight":63.8}'
+    $ aws kinesis put-record --stream-name LogStream --partition-key 2 --data '{"name":"Jiro","age":39,"weight":70.1}'
+    $ aws kinesis put-record --stream-name LogStream --partition-key 3 --data '{"name":"Hanako","age":35,"weight":49.5}'
 
 ### Creating a Kinesis source stream
 
@@ -27,16 +30,16 @@ For the Kinesis integration, you need to launch a spark-shell with this compiled
       .option("streams", "LogStream")
       .option("endpointUrl", "kinesis.ap-northeast-1.amazonaws.com")
       .option("initialPositionInStream", "earliest")
-      .option("format", "csv")
+      .option("format", "json")
       .option("inferSchema", "true")
       .load
 
     scala> kinesis.printSchema
     root
      |-- timestamp: timestamp (nullable = false)
-     |-- _c0: integer (nullable = true)
-     |-- _c1: string (nullable = true)
-     |-- _c2: double (nullable = true)
+     |-- age: integer (nullable = true)
+     |-- name: string (nullable = true)
+     |-- weight: double (nullable = true)
 
     // Write the stream data into console
     scala> :paste
@@ -49,14 +52,36 @@ For the Kinesis integration, you need to launch a spark-shell with this compiled
     -------------------------------------------
     Batch: 0
     -------------------------------------------
-    +--------------------+---+------+---+
-    |           timestamp|_c0|   _c1|_c2|
-    +--------------------+---+------+---+
-    |2016-10-24 09:49:...|  1|   abc|0.3|
-    |2016-10-24 09:50:...|  2|defghi|1.1|
-    |2016-10-24 09:50:...|  3|    jk|0.1|
-    +--------------------+---+------+---+
+    +--------------------+---+------+------+
+    |           timestamp|age|  name|weight|
+    +--------------------+---+------+------+
+    |2017-02-01 15:25:...| 33|  Taro|  63.8|
+    |2017-02-01 15:25:...| 39|  Jiro|  70.1|
+    |2017-02-01 15:25:...| 35|Hanako|  49.5|
+    +--------------------+---+------+------+
     ...
+
+If you get an exception like "No stream data exists for inferring a schema...",
+you need to explicitly set a schema for input streams as follows;
+
+    // Explicitly set a schema for "LogStream"
+    scala> :paste
+    val kinesis = spark
+      .readStream
+      .format("kinesis")
+      .option("streams", "LogStream")
+      .option("endpointUrl", "kinesis.ap-northeast-1.amazonaws.com")
+      .option("initialPositionInStream", "earliest")
+      .option("format", "json")
+      .schema(
+        StructType(
+          StructField("age", LongType) ::
+          StructField("name", StringType) ::
+          StructField("weight", DoubleType) ::
+          Nil
+        ))
+      .schema()
+      .load
 
 The following options must be set for the Kinesis source.
 
