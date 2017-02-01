@@ -38,7 +38,7 @@ private object JsonUtils {
     try {
       Serialization.read[Map[String, Map[String, String]]](str).flatMap { case (streamName, offsets) =>
         offsets.map { case (shardId, offset) =>
-          KinesisShard(streamName, shardId) -> offset
+          new KinesisShard(streamName, shardId) -> offset
         }
       }.toMap
     } catch {

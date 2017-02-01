@@ -20,7 +20,7 @@ package org.apache.spark.sql.kinesis
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.execution.streaming.SerializedOffset
 
-/** A holder for shard ids in streams */
+/** A holder for shard ids in streams. */
 private[spark] case class KinesisShard(streamName: String, shardId: String)
 
 /**
@@ -39,6 +39,7 @@ private[kinesis] object KinesisSourceOffset {
   def getShardSeqNumbers(offset: Offset): Map[KinesisShard, String] = {
     offset match {
       case o: KinesisSourceOffset => o.shardToSeqNum
+      case so: SerializedOffset => KinesisSourceOffset(so).shardToSeqNum
       case _ =>
         throw new IllegalArgumentException(
           s"Invalid conversion from offset of ${offset.getClass} to KinesisSourceOffset")
@@ -51,7 +52,7 @@ private[kinesis] object KinesisSourceOffset {
    */
   def apply(offsetTuples: (String, String, String)*): KinesisSourceOffset = {
     KinesisSourceOffset(offsetTuples.map { case (streamName, shardId, seqNum) =>
-        (KinesisShard(streamName, shardId), seqNum)
+        (new KinesisShard(streamName, shardId), seqNum)
       }.toMap
     )
   }

@@ -17,6 +17,9 @@
 
 package org.apache.spark.sql.kinesis
 
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
@@ -161,7 +164,22 @@ private[kinesis] class KinesisSource(
   private var currentOffset: Option[Offset] = None
 
   private lazy val initialShardSeqNumbers = {
-    val metadataLog = new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath)
+    val metadataLog =
+      new HDFSMetadataLog[KinesisSourceOffset](_sparkSession, metadataPath) {
+        override def serialize(metadata: KinesisSourceOffset, out: OutputStream): Unit = {
+          val bytes = metadata.json.getBytes(StandardCharsets.UTF_8)
+          out.write(bytes.length)
+          out.write(bytes)
+        }
+
+        override def deserialize(in: InputStream): KinesisSourceOffset = {
+          val length = in.read()
+          val bytes = new Array[Byte](length)
+          in.read(bytes)
+          KinesisSourceOffset(SerializedOffset(new String(bytes, StandardCharsets.UTF_8)))
+        }
+      }
+
     val seqNumbers = metadataLog.get(0).getOrElse {
       val offsets = KinesisSourceOffset(fetchAllShardEarliestSeqNumber())
       metadataLog.add(0, offsets)
@@ -281,7 +299,7 @@ private[kinesis] class KinesisSource(
     }
     val newLatestSeqNumbers = newBlocks.flatMap { case (_, SequenceNumberRanges(ranges), _, _) =>
       ranges.map { case range =>
-        val shard = KinesisShard(range.streamName, range.shardId)
+        val shard = new KinesisShard(range.streamName, range.shardId)
         (shard, range.toSeqNumber)
       }
     }.groupBy(_._1).mapValues(_.map(_._2).max)
@@ -325,7 +343,7 @@ private[kinesis] class KinesisSource(
           // Apply the soft limit here
           if (sumRecords < maxRecords) {
             ranges.foreach { range =>
-              offset.put(KinesisShard(range.streamName, range.shardId), range.toSeqNumber)
+              offset.put(new KinesisShard(range.streamName, range.shardId), range.toSeqNumber)
             }
             (offset, sumRecords + n)
           } else {
@@ -479,7 +497,7 @@ private[kinesis] class KinesisSource(
     }
     allShards.flatMap { case (streamName, shards) =>
       val shardSeqNumbers = shards.asScala.map { case shard =>
-        (KinesisShard(streamName, shard.getShardId),
+        (new KinesisShard(streamName, shard.getShardId),
           shard.getSequenceNumberRange.getStartingSequenceNumber)
       }
       logDebug(s"Got sequence numbers for $streamName: $shardSeqNumbers")
@@ -547,7 +565,8 @@ private[kinesis] object KinesisSource {
     )
     if (baseRdd.isEmpty()) {
       throw new IllegalStateException(
-        "No stream data exists for inferring a schema, so you need to explicitly set it")
+        s"No stream data exists for inferring a schema of ${kinesisOptions.format}, " +
+          "so you need to explicitly set it")
     }
     val valueSchema = dataFormat.inferSchema(sqlContext.sparkSession, baseRdd, sourceOptions)
     withTimestamp(valueSchema)
