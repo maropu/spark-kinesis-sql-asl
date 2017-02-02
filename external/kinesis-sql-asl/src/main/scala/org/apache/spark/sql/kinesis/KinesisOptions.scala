@@ -58,19 +58,19 @@ private[spark] class KinesisOptions(@transient private val parameters: Map[Strin
     }
   }
 
-  val streamNames = {
+  lazy val streamNames = {
     parameters.get("streams").map(_.split(",")).getOrElse {
       throw new IllegalArgumentException("Option `streams` must be set")
     }
   }
 
-  val endpointUrl = parameters.getOrElse("endpointUrl",
+  lazy val endpointUrl = parameters.getOrElse("endpointUrl",
     throw new IllegalArgumentException("Option `endpointUrl` must be set"))
 
-  val regionId = parameters.getOrElse("regionName",
+  lazy val regionId = parameters.getOrElse("regionName",
     RegionUtils.getRegionMetadata.getRegionByEndpoint(endpointUrl).getName())
 
-  val checkpointName = parameters.getOrElse("checkpointName", {
+  lazy val checkpointName = parameters.getOrElse("checkpointName", {
     val sdf = new SimpleDateFormat("yyyyMMddHHmmss")
     s"kinesis-checkpoint-${streamNames.sorted.mkString("-")}-${sdf.format(new Date())}"
   })

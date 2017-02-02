@@ -80,7 +80,6 @@ you need to explicitly set a schema for input streams as follows;
           StructField("weight", DoubleType) ::
           Nil
         ))
-      .schema()
       .load
 
 The following options must be set for the Kinesis source.
@@ -134,6 +133,24 @@ The following configurations are optional:
     offsets are out of range). This may be a false alarm. You can disable it when it doesn't work
     as you expected.
 
+### Transform Kinesis Streams to DataFrame
+
+You can easily transform input streams from Spark Streaming into DataFrame as follows;
+
+    // Import a class that includes a transformation function
+    scala> org.apache.spark.sql.kinesis.KinesisStreamingOps._
+
+    // Create an input DStream
+    scala> val inputStream: DStream[Array[Byte]] = ...
+
+    // Define a schema of the input
+    scala> val schema = StructType(StructField("id", IntegerType) :: StructField("value", DoubleType) :: Nil)
+
+    scala> :paste
+    inputStream.toDF(spark, schema, Map("format" -> "csv")) { inputDf: DataFrame =>
+      ...
+    }
+
 ### Output Operation for Spark Streaming
 
 Since a Kinesis output operation for Spark Streaming is not officially supported in the latest Spark release,
@@ -142,8 +159,8 @@ this provides the operation like this;
     // Import a class that includes an output function
     scala> import org.apache.spark.streaming.kinesis.KinesisDStreamFunctions._
 
-    // Create a DStream
-    scala> val stream: DStream[String] = ...
+    // Create an output DStream
+    scala> val outputStream: DStream[String] = ...
 
     // Define a handler to convert the DStream type for output
     scala> val msgHandler = (s: String) => s.getBytes("UTF-8")
@@ -151,7 +168,7 @@ this provides the operation like this;
     // Define the output operation
     scala> val streamName = "OutputStream"
     scala> val endpointUrl = "kinesis.ap-northeast-1.amazonaws.com"
-    scala> kinesisStream.count().saveAsKinesisStream(streamName, endpointUrl, msgHandler)
+    scala> outputStream.saveAsKinesisStream(streamName, endpointUrl, msgHandler)
 
     // Start processing the stream
     scala> ssc.start()

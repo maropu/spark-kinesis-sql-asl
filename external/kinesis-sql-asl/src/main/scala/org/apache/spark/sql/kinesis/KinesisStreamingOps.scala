@@ -21,16 +21,17 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.execution.LogicalRDD
-import org.apache.spark.sql.execution.datasources.csv.CSVKinesisValueFormat
 import org.apache.spark.streaming.dstream.DStream
 
 final class KinesisStreamingOps(ds: DStream[Array[Byte]]) {
 
-  def execute(schema: StructType, options: Map[String, String], f: DataFrame => DataFrame)
-      (implicit spark: SparkSession): DStream[Row] = {
-    val csvReader = new CSVKinesisValueFormat().buildReader(spark, schema, options)
+  def toDF(spark: SparkSession, schema: StructType, sourceOptions: Map[String, String] = Map.empty)
+      (f: DataFrame => DataFrame): DStream[Row] = {
+    val kinesisOptions = new KinesisOptions(sourceOptions)
+    val dataFormat = KinesisDataFormatFactory.create(kinesisOptions.format)
+    val reader = dataFormat.buildReader(spark, schema, sourceOptions)
     ds.transform[Row] { rdd: RDD[Array[Byte]] =>
-      val logicalRdd = LogicalRDD(schema.toAttributes, rdd.mapPartitionsInternal(csvReader))(spark)
+      val logicalRdd = LogicalRDD(schema.toAttributes, rdd.mapPartitionsInternal(reader))(spark)
       val df = Dataset.ofRows(spark, logicalRdd)
       f(df).rdd
     }
