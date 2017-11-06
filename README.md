@@ -1,5 +1,8 @@
 [![Build Status](https://travis-ci.org/maropu/spark-kinesis-sql-asl.svg?branch=master)](https://travis-ci.org/maropu/spark-kinesis-sql-asl)
 
+Note: This repository does not keep updated now, so you should check up
+[the Kinesis connector](https://docs.databricks.com/spark/latest/structured-streaming/kinesis.html) in Databricks.
+
 Structured Streaming integration for Kinesis and some utility stuffs for AWS.
 This is just a prototype to check feasibility for the kinesis integration.
 [SPARK-18165](https://issues.apache.org/jira/browse/SPARK-18165) describes the integration and
@@ -194,8 +197,3 @@ in streams because this source depends on the Kinesis integration and their rece
 as many cores as a total shard number. More details can be found in
 [the Spark Streaming documentation](http://spark.apache.org/docs/latest/streaming-programming-guide.html#points-to-remember-1).
 
-### Bug reports
-
-If you hit some bugs and requests, please leave some comments on
-[Issues](https://github.com/maropu/spark-kinesis-sql-asl/issues) or
-Twitter([@maropu](http://twitter.com/#!/maropu)).
